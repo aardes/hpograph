@@ -7,6 +7,13 @@ const HPOApp = (() => {
   const DB_ORDER = ["OMIM", "ORPHA", "DECIPHER"];
   const ROWS_PER_SOURCE = 50;
 
+  // Validated during development: both of these correctly surface the
+  // clinically-expected diagnosis at or near the top of both lists.
+  const EXAMPLES = {
+    marfan: ["HP:0001166", "HP:0001083", "HP:0002616"], // Arachnodactyly, Ectopia lentis, Aortic root aneurysm
+    ndd: ["HP:0001250", "HP:0001263", "HP:0000252"], // Seizure, Global developmental delay, Microcephaly
+  };
+
   const state = {
     focusId: null,
     selected: new Map(), // id -> {id, name}
@@ -28,6 +35,8 @@ const HPOApp = (() => {
     addFocusBtn: document.getElementById("add-focus-btn"),
     selectedList: document.getElementById("selected-list"),
     relationshipsPanel: document.getElementById("relationships-panel"),
+    exportBtn: document.getElementById("export-btn"),
+    exampleChips: document.querySelectorAll(".hg-example-chip"),
     tabSelected: document.getElementById("tab-selected"),
     tabDisease: document.getElementById("tab-disease"),
     tabGene: document.getElementById("tab-gene"),
@@ -78,6 +87,25 @@ const HPOApp = (() => {
     el.tabs.forEach((btn) => {
       btn.addEventListener("click", () => switchTab(btn.dataset.tab));
     });
+
+    el.exampleChips.forEach((btn) => {
+      btn.addEventListener("click", () => loadExample(btn.dataset.example));
+    });
+
+    el.exportBtn.addEventListener("click", exportPdf);
+  }
+
+  function loadExample(key) {
+    const ids = EXAMPLES[key];
+    if (!ids) return;
+    state.selected.clear();
+    for (const id of ids) {
+      const info = HPOGraph.termInfo(id);
+      if (info) state.selected.set(id, { id, name: info.name });
+    }
+    renderSelectedList();
+    focusOn(ids[ids.length - 1]);
+    switchTab("disease");
   }
 
   function onSearchInput() {
@@ -204,7 +232,195 @@ const HPOApp = (() => {
         el.selectedList.appendChild(row);
       }
     }
+    el.exportBtn.style.display = state.selected.size ? "flex" : "none";
     renderRelationships();
+  }
+
+  // ---- export: a one-page PDF report of the phenotype set (and, if
+  // available, the current ranking) generated entirely client-side with
+  // jsPDF -- no server, so nothing about the patient's phenotype set ever
+  // leaves the browser. ----
+
+  // Same hue sweep as scoreColor() (blue=low -> red=high), but returning an
+  // RGB triple since jsPDF's setTextColor() needs numeric channels, not a
+  // CSS hsl() string.
+  function scoreRgb(pct) {
+    const clamped = Math.min(Math.max(pct, 0), 100);
+    const h = (240 - (clamped / 100) * 240) / 360;
+    const s = 0.75;
+    const l = 0.48;
+    const hue2rgb = (p, q, t) => {
+      if (t < 0) t += 1;
+      if (t > 1) t -= 1;
+      if (t < 1 / 6) return p + (q - p) * 6 * t;
+      if (t < 1 / 2) return q;
+      if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+      return p;
+    };
+    const q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+    const p = 2 * l - q;
+    return [
+      Math.round(hue2rgb(p, q, h + 1 / 3) * 255),
+      Math.round(hue2rgb(p, q, h) * 255),
+      Math.round(hue2rgb(p, q, h - 1 / 3) * 255),
+    ];
+  }
+
+  function truncatePdf(str, max) {
+    if (!str) return "";
+    return str.length > max ? str.slice(0, max - 1) + "…" : str;
+  }
+
+  function generatePdfReport() {
+    if (!window.jspdf || !window.jspdf.jsPDF) {
+      console.warn("jsPDF failed to load -- cannot generate report.");
+      return;
+    }
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: "mm", format: "a4" });
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const marginX = 16;
+    const maxY = 275; // leaves room for the footer below
+    let y = 18;
+
+    const setFont = (size, style, color) => {
+      doc.setFont("helvetica", style || "normal");
+      doc.setFontSize(size);
+      const c = color || [30, 30, 30];
+      doc.setTextColor(c[0], c[1], c[2]);
+    };
+    const room = (next) => y + next <= maxY;
+
+    // -- header --
+    setFont(18, "bold", [11, 18, 32]);
+    doc.text("HPOGraph — Phenotype Report", marginX, y);
+    y += 6;
+    setFont(9, "normal", [110, 110, 110]);
+    const now = new Date();
+    doc.text(`Generated ${now.toLocaleDateString()} ${now.toLocaleTimeString()}`, marginX, y);
+    y += 4;
+    doc.setDrawColor(24, 184, 160);
+    doc.setLineWidth(0.6);
+    doc.line(marginX, y, pageWidth - marginX, y);
+    y += 8;
+
+    // -- selected phenotypes --
+    setFont(12, "bold", [11, 18, 32]);
+    doc.text(`Selected phenotypes (${state.selected.size})`, marginX, y);
+    y += 6;
+    for (const { id, name } of state.selected.values()) {
+      if (!room(5)) break;
+      setFont(9.5, "bold");
+      doc.text(id, marginX, y);
+      setFont(9.5, "normal");
+      doc.text(truncatePdf(name, 85), marginX + 28, y);
+      y += 5;
+    }
+    y += 3;
+
+    // -- phenotype-set relationships (only meaningful with 2+ terms) --
+    const ids = Array.from(state.selected.keys());
+    if (ids.length >= 2 && room(16)) {
+      const allCats = new Map();
+      for (const id of ids) {
+        for (const c of Ranking.categoriesFor(id)) allCats.set(c.id, c.name);
+      }
+      const pairs = Ranking.pairwiseDistances(ids);
+      const avgDist = pairs.reduce((s, p) => s + p.distance, 0) / pairs.length;
+      const minDist = Math.min(...pairs.map((p) => p.distance));
+
+      setFont(12, "bold", [11, 18, 32]);
+      doc.text("Phenotype-set relationships", marginX, y);
+      y += 6;
+      setFont(9.5, "normal");
+      const catLine = `${allCats.size} organ system${allCats.size === 1 ? "" : "s"} spanned: ${truncatePdf(
+        Array.from(allCats.values()).join(", "),
+        90
+      )}`;
+      doc.text(catLine, marginX, y);
+      y += 5;
+      doc.text(
+        `Average pairwise distance ${(avgDist * 100).toFixed(0)}% · closest pair ${(minDist * 100).toFixed(0)}% apart`,
+        marginX,
+        y
+      );
+      y += 7;
+    }
+
+    // -- top candidate diseases --
+    if (state.lastDiseaseScores.length && room(14)) {
+      setFont(12, "bold", [11, 18, 32]);
+      doc.text("Top candidate diseases", marginX, y);
+      y += 6;
+      setFont(8, "bold", [110, 110, 110]);
+      doc.text("SCORE", marginX, y);
+      doc.text("ID", marginX + 18, y);
+      doc.text("NAME", marginX + 48, y);
+      y += 4.5;
+      for (const s of state.lastDiseaseScores.slice(0, 8)) {
+        if (!room(5)) break;
+        const pct = Math.round(s.score * 100);
+        setFont(9, "bold", scoreRgb(pct));
+        doc.text(`${pct}%`, marginX, y);
+        setFont(9, "normal");
+        doc.text(s.diseaseId, marginX + 18, y);
+        doc.text(truncatePdf(diseaseName(s.diseaseId), 62), marginX + 48, y);
+        y += 5;
+      }
+      y += 3;
+    }
+
+    // -- top candidate genes --
+    if (state.lastGeneScores.length && room(14)) {
+      setFont(12, "bold", [11, 18, 32]);
+      doc.text("Top candidate genes", marginX, y);
+      y += 6;
+      setFont(8, "bold", [110, 110, 110]);
+      doc.text("SCORE", marginX, y);
+      doc.text("GENE", marginX + 18, y);
+      doc.text("BEST-SUPPORTING DISEASE", marginX + 40, y);
+      y += 4.5;
+      for (const g of state.lastGeneScores.slice(0, 8)) {
+        if (!room(5)) break;
+        const pct = Math.round(g.score * 100);
+        setFont(9, "bold", scoreRgb(pct));
+        doc.text(`${pct}%`, marginX, y);
+        setFont(9, "normal");
+        doc.text(g.symbol, marginX + 18, y);
+        doc.text(truncatePdf(diseaseName(g.bestDisease), 55), marginX + 40, y);
+        y += 5;
+      }
+    }
+
+    // -- footer disclaimer, pinned near the bottom of the page --
+    const footerY = 282;
+    doc.setDrawColor(215, 222, 224);
+    doc.setLineWidth(0.3);
+    doc.line(marginX, footerY - 5, pageWidth - marginX, footerY - 5);
+    setFont(7.5, "italic", [110, 110, 110]);
+    const disclaimer =
+      "HPOGraph is a decision-support aid for exploring phenotype-driven differential diagnoses -- it is not a diagnostic tool. " +
+      "Findings should be independently verified against primary sources before any clinical use. Data: HPO Consortium, OMIM, Orphanet, HGNC.";
+    doc.text(doc.splitTextToSize(disclaimer, pageWidth - marginX * 2), marginX, footerY);
+
+    doc.save(`hpograph-report-${now.toISOString().slice(0, 10)}.pdf`);
+  }
+
+  function exportPdf() {
+    const original = el.exportBtn.innerHTML;
+    try {
+      generatePdfReport();
+      el.exportBtn.classList.add("copied");
+      el.exportBtn.innerHTML = '<i class="fa fa-check"></i> Report downloaded!';
+    } catch (e) {
+      console.error("PDF generation failed:", e);
+      el.exportBtn.innerHTML = '<i class="fa fa-exclamation-triangle"></i> Failed -- see console';
+    } finally {
+      setTimeout(() => {
+        el.exportBtn.classList.remove("copied");
+        el.exportBtn.innerHTML = original;
+      }, 1800);
+    }
   }
 
   // ---- phenotype-set relationships: how close/far are the selected terms

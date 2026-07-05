@@ -20,6 +20,16 @@ const HPOGraph = (() => {
     return HPODB.one("SELECT id, name, obsolete FROM terms WHERE id=?", [termId]);
   }
 
+  function termDefinition(termId) {
+    return HPODB.one("SELECT definition FROM terms WHERE id=?", [termId])?.definition || "";
+  }
+
+  function escapeHtmlLocal(str) {
+    const d = document.createElement("div");
+    d.textContent = str ?? "";
+    return d.innerHTML;
+  }
+
   // Build the set of nodes/edges to display: full ancestor closure of focusId + its direct children.
   function buildNeighborhood(focusId) {
     const nodeIds = new Set([focusId]);
@@ -133,6 +143,33 @@ const HPOGraph = (() => {
       const id = evt.target.id();
       if (onAdd) onAdd(id);
     });
+
+    // Hover tooltip: definition preview before committing to a click.
+    const tooltipEl = document.getElementById("graph-tooltip");
+    if (tooltipEl) {
+      cy.on("mouseover", "node", (evt) => {
+        const node = evt.target;
+        const id = node.id();
+        const info = termInfo(id);
+        if (!info) return;
+        const def = termDefinition(id);
+        const pos = node.renderedPosition();
+        tooltipEl.innerHTML = `<span class="hg-tooltip-id">${id}</span>${escapeHtmlLocal(info.name)}${
+          def ? `<br>${escapeHtmlLocal(def)}` : ""
+        }`;
+        tooltipEl.style.left = `${pos.x}px`;
+        tooltipEl.style.top = `${pos.y}px`;
+        tooltipEl.style.display = "block";
+        containerEl.style.cursor = "pointer";
+      });
+      cy.on("mouseout", "node", () => {
+        tooltipEl.style.display = "none";
+        containerEl.style.cursor = "";
+      });
+      cy.on("pan zoom", () => {
+        tooltipEl.style.display = "none";
+      });
+    }
 
     // Prefer the dagre layout (clean top-down DAG rendering); if the
     // cytoscape-dagre extension failed to load (e.g. CDN hiccup), fall back

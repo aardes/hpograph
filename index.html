@@ -43,6 +43,12 @@
           <div id="search-results" class="hg-search-results"></div>
         </div>
 
+        <div class="hg-examples">
+          <span class="hg-examples-label">Try an example:</span>
+          <button class="hg-example-chip" data-example="marfan">Marfan-like</button>
+          <button class="hg-example-chip" data-example="ndd">Neurodevelopmental</button>
+        </div>
+
         <div class="hg-focus-bar">
           <div id="focus-label" class="hg-focus-label">Search above to select a term.</div>
           <button id="add-focus-btn" class="hg-add-btn" disabled>+ Add to selected</button>
@@ -55,7 +61,10 @@
           <span class="hg-hint">Click a node to explore it · double-click to add it · scroll to zoom</span>
         </div>
 
-        <div id="graph-container" class="hg-graph-container"></div>
+        <div class="hg-graph-container-wrap">
+          <div id="graph-container" class="hg-graph-container"></div>
+          <div id="graph-tooltip" class="hg-graph-tooltip"></div>
+        </div>
       </section>
 
       <section class="hg-side-panel">
@@ -67,15 +76,26 @@
 
         <div id="panel-selected" class="hg-tab-panel">
           <div id="selected-list" class="hg-selected-list"></div>
+          <button id="export-btn" class="hg-export-btn" style="display:none"><i class="fa fa-file-pdf-o"></i> Download PDF report</button>
           <div id="relationships-panel" class="hg-relationships"></div>
         </div>
 
         <div id="panel-disease" class="hg-tab-panel" style="display:none">
+          <div class="hg-score-legend">
+            <span>Score:</span>
+            <span class="hg-score-legend-bar"></span>
+            <span class="hg-score-legend-labels"><span>0%</span><span>50%</span><span>100%</span></span>
+          </div>
           <div id="rank-status" class="hg-rank-status"></div>
           <div id="disease-list" class="hg-rank-list"></div>
         </div>
 
         <div id="panel-gene" class="hg-tab-panel" style="display:none">
+          <div class="hg-score-legend">
+            <span>Score:</span>
+            <span class="hg-score-legend-bar"></span>
+            <span class="hg-score-legend-labels"><span>0%</span><span>50%</span><span>100%</span></span>
+          </div>
           <div id="gene-list" class="hg-rank-list"></div>
         </div>
       </section>
@@ -222,6 +242,8 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/dagre/0.8.5/dagre.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.33.2/cytoscape.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js"></script>
+<!-- jsPDF: generates the one-page phenotype report entirely client-side -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/4.0.0/jspdf.umd.min.js"></script>
 
 <script src="assets/js/db.js"></script>
 <script src="assets/js/ranking.js"></script>
