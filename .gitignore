@@ -1,0 +1,11 @@
+# Raw source data (large, re-downloadable, rebuilt into data/hpo.db by scripts/build_db.py)
+raw_data/
+
+# OS / editor cruft
+.DS_Store
+*.pyc
+__pycache__/
+
+# Local scratch
+node_modules/
+*.log

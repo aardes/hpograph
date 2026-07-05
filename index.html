@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>HPOGraph — Phenotype lookup &amp; gene/disease prioritization</title>
+<link rel="stylesheet" href="assets/css/style.css" />
+</head>
+<body>
+
+<header class="app-header">
+  <h1>HPOGraph</h1>
+  <p>Human Phenotype Ontology explorer — search terms, see the real DAG structure, and rank candidate diseases &amp; genes from a selected phenotype set.</p>
+</header>
+
+<main class="app-main">
+
+  <section class="panel left-panel">
+    <div class="panel-header">
+      <h2>Phenotype lookup</h2>
+    </div>
+
+    <div class="search-box">
+      <input id="search-input" type="text" placeholder="Search HPO term (e.g. &quot;arachnodactyly&quot; or HP:0001166)" autocomplete="off" />
+      <div id="search-results" class="search-results"></div>
+    </div>
+
+    <div class="focus-bar">
+      <div id="focus-label" class="focus-label"></div>
+      <button id="add-focus-btn" class="btn-add">+ Add to selected</button>
+    </div>
+
+    <div class="graph-legend">
+      <span><i class="dot dot-focus"></i> focused term</span>
+      <span><i class="dot dot-ancestor"></i> ancestor (all paths shown)</span>
+      <span><i class="dot dot-child"></i> child</span>
+      <span class="hint">Click a node to explore it · double-click to add it · scroll to zoom</span>
+    </div>
+
+    <div id="graph-container" class="graph-container"></div>
+  </section>
+
+  <section class="panel right-panel">
+    <div class="tab-bar">
+      <button class="tab-btn active" data-tab="selected">Selected HPO Terms (<span id="selected-count">0</span>)</button>
+      <button class="tab-btn" data-tab="disease">Associated Disease</button>
+      <button class="tab-btn" data-tab="gene">Associated Gene</button>
+    </div>
+
+    <div id="panel-selected" class="tab-panel">
+      <div id="selected-list" class="selected-list"></div>
+    </div>
+
+    <div id="panel-disease" class="tab-panel" style="display:none">
+      <div id="rank-status" class="rank-status"></div>
+      <div id="disease-list" class="rank-list"></div>
+    </div>
+
+    <div id="panel-gene" class="tab-panel" style="display:none">
+      <div id="gene-list" class="rank-list"></div>
+    </div>
+  </section>
+
+</main>
+
+<div id="loading-overlay" class="loading-overlay">
+  <div class="loading-box">
+    <div class="spinner"></div>
+    <div id="loading-text">Loading…</div>
+  </div>
+</div>
+
+<!-- sql.js: SQLite compiled to WebAssembly, runs the whole database client-side -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.13.0/sql-wasm.js"></script>
+<!-- cytoscape.js + dagre: DAG graph rendering -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dagre/0.8.5/dagre.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.33.2/cytoscape.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js"></script>
+
+<script src="assets/js/db.js"></script>
+<script src="assets/js/ranking.js"></script>
+<script src="assets/js/graph.js"></script>
+<script src="assets/js/app.js"></script>
+</body>
+</html>
