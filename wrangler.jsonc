@@ -6,6 +6,10 @@
   // stalled/failed "Detected Project Settings: Worker Name: hpograph" build.
   "name": "hpograph",
   "compatibility_date": "2026-07-06",
+  // Publish to the free *.workers.dev subdomain so the site actually has a
+  // public URL. Even with this set, Cloudflare may still need it toggled on
+  // once in the dashboard's Domains tab for a brand-new project.
+  "workers_dev": true,
   "assets": {
     "directory": "."
   }
