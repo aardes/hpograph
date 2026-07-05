@@ -1,0 +1,12 @@
+{
+  // Tells Cloudflare's build ("npx wrangler deploy") that this is a plain
+  // static site with no Worker script -- just upload everything in this
+  // directory and serve it. Without this file, Cloudflare's git-integration
+  // build falls back to ambiguous auto-detection, which is what produced the
+  // stalled/failed "Detected Project Settings: Worker Name: hpograph" build.
+  "name": "hpograph",
+  "compatibility_date": "2026-07-06",
+  "assets": {
+    "directory": "."
+  }
+}

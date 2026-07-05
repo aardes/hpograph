@@ -1,0 +1,9 @@
+# Files in the repo that shouldn't be served as public static assets by
+# Cloudflare Workers (this uses .gitignore-style syntax).
+scripts/
+README.md
+wrangler.jsonc
+.gitignore
+.git/
+*.pyc
+__pycache__/
