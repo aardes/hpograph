@@ -16,6 +16,7 @@ Usage:
 """
 import argparse
 import csv
+import gzip
 import json
 import math
 import os
@@ -506,6 +507,19 @@ def main():
 
     size_mb = os.path.getsize(args.out) / (1024 * 1024)
     print(f"Done. {args.out} ({size_mb:.1f} MB)")
+
+    # Cloudflare Pages (and most static hosts) reject/refuse individual files
+    # over ~25 MiB. The raw sqlite file comes out well above that, but it
+    # compresses very well (SQLite pages are mostly text/low-entropy), so we
+    # also ship a gzipped copy. The browser fetches THIS file and decompresses
+    # it client-side with the native DecompressionStream API (see db.js) --
+    # no server-side gzip negotiation required, and no extra JS library needed.
+    gz_path = args.out + ".gz"
+    print("Compressing for static hosting (gzip)...")
+    with open(args.out, "rb") as f_in, gzip.open(gz_path, "wb", compresslevel=9) as f_out:
+        f_out.write(f_in.read())
+    gz_size_mb = os.path.getsize(gz_path) / (1024 * 1024)
+    print(f"Done. {gz_path} ({gz_size_mb:.1f} MB) -- this is the file committed to git / deployed.")
 
 
 if __name__ == "__main__":

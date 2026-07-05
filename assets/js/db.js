@@ -1,5 +1,12 @@
 // db.js -- thin wrapper around sql.js (SQLite compiled to WASM).
-// Loads /data/hpo.db entirely client-side; no server/backend involved.
+// Loads /data/hpo.db.gz entirely client-side; no server/backend involved.
+//
+// The database is shipped gzip-compressed (~11MB instead of ~42MB) because
+// static hosts including Cloudflare Pages cap individual deployed files at
+// 25 MiB. We fetch the compressed bytes ourselves (for accurate download
+// progress) and decompress them in-browser with the native
+// DecompressionStream API -- no extra JS library needed. See
+// scripts/build_db.py for how hpo.db.gz is produced.
 
 const HPODB = (() => {
   let SQL = null;
@@ -10,8 +17,8 @@ const HPODB = (() => {
       locateFile: (file) => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.13.0/${file}`,
     });
 
-    const resp = await fetch("data/hpo.db");
-    if (!resp.ok) throw new Error(`Failed to fetch hpo.db: ${resp.status}`);
+    const resp = await fetch("data/hpo.db.gz");
+    if (!resp.ok) throw new Error(`Failed to fetch hpo.db.gz: ${resp.status}`);
 
     const contentLength = resp.headers.get("Content-Length");
     const total = contentLength ? parseInt(contentLength, 10) : null;
@@ -25,12 +32,20 @@ const HPODB = (() => {
       loaded += value.length;
       if (onProgress) onProgress(loaded, total);
     }
-    const buf = new Uint8Array(loaded);
+    const compressed = new Uint8Array(loaded);
     let offset = 0;
     for (const chunk of chunks) {
-      buf.set(chunk, offset);
+      compressed.set(chunk, offset);
       offset += chunk.length;
     }
+
+    if (typeof DecompressionStream === "undefined") {
+      throw new Error(
+        "This browser doesn't support gzip decompression (DecompressionStream). Please use a recent version of Chrome, Firefox, Edge, or Safari."
+      );
+    }
+    const decompressedStream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream("gzip"));
+    const buf = new Uint8Array(await new Response(decompressedStream).arrayBuffer());
 
     db = new SQL.Database(buf);
     return db;

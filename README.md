@@ -24,12 +24,19 @@ Live app: this repo auto-deploys to Cloudflare Pages on every push to `main`.
 ## Architecture, in one paragraph
 
 Everything runs client-side: the entire dataset ships as a single SQLite file
-(`data/hpo.db`, ~43MB) queried in the browser via
+(`data/hpo.db`, ~43MB uncompressed) queried in the browser via
 [sql.js](https://github.com/sql-js/sql.js) (SQLite compiled to WebAssembly).
 There is no backend, no server-side database, and no API to pay for or keep
 running — the whole app is static files (HTML/CSS/JS + one data file), which
 is why it deploys for free on Cloudflare Pages (or GitHub Pages) with zero
 ongoing cost.
+
+The file actually committed to the repo and served to the browser is
+`data/hpo.db.gz` (~11MB) — Cloudflare Pages (and most static hosts) reject
+individual deployed files over 25 MiB, and the raw sqlite file is ~42MB. The
+browser fetches the gzipped file and decompresses it itself with the native
+`DecompressionStream` API before handing the bytes to sql.js (see
+`assets/js/db.js`) — no extra JS library, no server-side gzip negotiation.
 
 ## Why a graph, not a tree
 
@@ -61,7 +68,7 @@ through a shared ancestor even if their names share no words at all.
 
 This is a static site with one requirement: it must be served over `http://`,
 not opened directly as a `file://` URL — browsers block `fetch()` of local
-files under `file://`, so `data/hpo.db` would fail to load with the double-click-the-file
+files under `file://`, so `data/hpo.db.gz` would fail to load with the double-click-the-file
 approach.
 
 From the repo root, any of these work:
@@ -84,9 +91,10 @@ load time, and everything else is plain JS files in `assets/js/`.
 
 ## Rebuilding the database
 
-`data/hpo.db` is a compiled snapshot. It is **not** regenerated automatically
-by Cloudflare Pages — you rebuild it locally and commit the new file whenever
-you want to pick up a newer HPO/OMIM/HGNC release.
+`data/hpo.db` / `data/hpo.db.gz` are a compiled snapshot. They are **not**
+regenerated automatically by Cloudflare Pages — you rebuild them locally and
+commit the new `.gz` file whenever you want to pick up a newer HPO/OMIM/HGNC
+release.
 
 1. Download fresh source files into a local `raw_data/` folder (this folder is
    gitignored — it's only a rebuild input, never committed):
@@ -100,9 +108,11 @@ you want to pick up a newer HPO/OMIM/HGNC release.
    ```
    This is a plain Python 3 script with no third-party dependencies (only
    `sqlite3`, `json`, `csv`, `math` from the standard library) — takes under
-   a minute.
-3. Commit `data/hpo.db`. That's the only file that needs to change; push, and
-   Cloudflare Pages redeploys the new data automatically.
+   a minute. It writes `data/hpo.db` and then automatically also writes the
+   gzip-compressed `data/hpo.db.gz` that actually gets deployed.
+3. Commit `data/hpo.db.gz` (the plain `data/hpo.db` is gitignored — it's
+   ~42MB, over Cloudflare Pages' 25 MiB per-file limit, so it must never be
+   committed). Push, and Cloudflare Pages redeploys the new data automatically.
 
 The script parses the raw files and compiles them into one compact SQLite
 database:
@@ -269,23 +279,33 @@ assets/js/db.js          sql.js loader + query wrapper
 assets/js/graph.js       Cytoscape.js DAG neighborhood view
 assets/js/ranking.js     IC/Resnik-Lin similarity + BMA ranking, explainability, relatedness
 assets/js/app.js         UI wiring (search, selected terms, tabs, ranking display)
-data/hpo.db              compiled database (rebuilt via scripts/build_db.py)
+data/hpo.db.gz           compiled, gzip-compressed database (committed; rebuilt via scripts/build_db.py)
+data/hpo.db              uncompressed build artifact (gitignored, ~42MB, never committed)
 scripts/build_db.py      ETL pipeline
 raw_data/                (gitignored — put HPO/HGNC/OMIM source files here to rebuild)
 ```
 
 ## Deploying (Cloudflare Pages)
 
-This repo is already connected: https://github.com/aardes/hpograph
+Repo: https://github.com/aardes/hpograph
 
-Since this is a pure static site (no build step needed — `data/hpo.db` is
-committed pre-built), configure the Cloudflare Pages project with:
+To connect it to Cloudflare Pages:
 
-- **Build command:** *(leave empty)*
-- **Build output directory:** `/`
+1. In the [Cloudflare dashboard](https://dash.cloudflare.com/), go to
+   **Workers & Pages → Create application → Pages tab → Import an existing
+   Git repository**.
+2. Authorize Cloudflare's GitHub app if prompted, and select the `aardes/hpograph`
+   repository, then **Begin setup**.
+3. Build settings (this is a pure static site, no build step needed —
+   `data/hpo.db.gz` is committed pre-built):
+   - **Framework preset:** None
+   - **Build command:** *(leave empty)*
+   - **Build output directory:** `/`
+4. Click **Save and Deploy**. Every future push to the connected branch
+   (`main`) redeploys automatically.
 
-Every push to the connected branch redeploys automatically. If you rebuild
-`data/hpo.db` locally, just commit the new file — no other steps required.
+If you rebuild the database locally, just commit the new `data/hpo.db.gz` —
+no other steps required.
 
 ## Data licensing note
 
