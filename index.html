@@ -4,68 +4,214 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>HPOGraph — Phenotype lookup &amp; gene/disease prioritization</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css" />
 <link rel="stylesheet" href="assets/css/style.css" />
 </head>
 <body>
 
-<header class="app-header">
-  <h1>HPOGraph</h1>
-  <p>Human Phenotype Ontology explorer — search terms, see the real DAG structure, and rank candidate diseases &amp; genes from a selected phenotype set.</p>
-</header>
+<section class="hg-preview-card">
 
-<main class="app-main">
-
-  <section class="panel left-panel">
-    <div class="panel-header">
-      <h2>Phenotype lookup</h2>
+  <header class="hg-preview-head">
+    <div class="hg-summary-icon"><i class="fa fa-share-alt"></i></div>
+    <div>
+      <div class="hg-summary-title">
+        HPOGraph
+        <span class="hg-info-dot"><i class="fa fa-info"></i>
+          <span class="hg-info-popover">
+            The Human Phenotype Ontology is a graph, not a tree — a term can be reached through more than
+            one parent branch. Search a term to see its real position in the DAG (every ancestor path, plus
+            its children), then add terms to a phenotype set to rank candidate diseases &amp; genes using an
+            information-content-weighted similarity score.
+          </span>
+        </span>
+      </div>
+      <div class="hg-summary-subtitle">Search any HPO term, see it highlighted in its graph neighborhood, then build a phenotype set to rank diseases &amp; genes.</div>
     </div>
+    <a href="#docs" class="hg-docs-jump"><i class="fa fa-book"></i> How this works</a>
+  </header>
 
-    <div class="search-box">
-      <input id="search-input" type="text" placeholder="Search HPO term (e.g. &quot;arachnodactyly&quot; or HP:0001166)" autocomplete="off" />
-      <div id="search-results" class="search-results"></div>
+  <div class="hg-preview-body">
+    <div class="hg-main-grid">
+
+      <section class="hg-panel">
+        <div class="hg-panel-head">
+          <div class="hg-panel-title"><i class="fa fa-search"></i> Phenotype lookup</div>
+        </div>
+
+        <div class="hg-search-wrap-lg">
+          <input id="search-input" class="hg-search hg-search-lg" type="text" placeholder="Search any HPO term (e.g. &quot;arachnodactyly&quot; or HP:0001166)" autocomplete="off" />
+          <div id="search-results" class="hg-search-results"></div>
+        </div>
+
+        <div class="hg-focus-bar">
+          <div id="focus-label" class="hg-focus-label">Search above to select a term.</div>
+          <button id="add-focus-btn" class="hg-add-btn" disabled>+ Add to selected</button>
+        </div>
+
+        <div class="hg-graph-legend">
+          <span><i class="hg-dot hg-dot-focus"></i> selected term</span>
+          <span><i class="hg-dot hg-dot-ancestor"></i> higher (ancestors, all paths)</span>
+          <span><i class="hg-dot hg-dot-child"></i> lower (children)</span>
+          <span class="hg-hint">Click a node to explore it · double-click to add it · scroll to zoom</span>
+        </div>
+
+        <div id="graph-container" class="hg-graph-container"></div>
+      </section>
+
+      <section class="hg-side-panel">
+        <div class="hg-tab-bar">
+          <button id="tab-selected" class="hg-tab-btn active" data-tab="selected">Selected (0)</button>
+          <button id="tab-disease" class="hg-tab-btn" data-tab="disease">Diseases</button>
+          <button id="tab-gene" class="hg-tab-btn" data-tab="gene">Genes</button>
+        </div>
+
+        <div id="panel-selected" class="hg-tab-panel">
+          <div id="selected-list" class="hg-selected-list"></div>
+          <div id="relationships-panel" class="hg-relationships"></div>
+        </div>
+
+        <div id="panel-disease" class="hg-tab-panel" style="display:none">
+          <div id="rank-status" class="hg-rank-status"></div>
+          <div id="disease-list" class="hg-rank-list"></div>
+        </div>
+
+        <div id="panel-gene" class="hg-tab-panel" style="display:none">
+          <div id="gene-list" class="hg-rank-list"></div>
+        </div>
+      </section>
+
     </div>
+  </div>
 
-    <div class="focus-bar">
-      <div id="focus-label" class="focus-label"></div>
-      <button id="add-focus-btn" class="btn-add">+ Add to selected</button>
-    </div>
+</section>
 
-    <div class="graph-legend">
-      <span><i class="dot dot-focus"></i> focused term</span>
-      <span><i class="dot dot-ancestor"></i> ancestor (all paths shown)</span>
-      <span><i class="dot dot-child"></i> child</span>
-      <span class="hint">Click a node to explore it · double-click to add it · scroll to zoom</span>
-    </div>
+<section id="docs" class="hg-docs-card">
+  <div class="hg-docs-head">
+    <div class="hg-panel-title"><i class="fa fa-book"></i> About HPOGraph — how this works</div>
+    <div class="hg-browser-sub">Click any question below to expand it.</div>
+  </div>
+  <div class="hg-docs-body">
 
-    <div id="graph-container" class="graph-container"></div>
-  </section>
+    <details open>
+      <summary>Why show a graph instead of a tree?</summary>
+      <div class="hg-docs-content">
+        <p>
+          Most HPO browsers, including HPO's own official site, render the ontology as a tree: pick one
+          parent, draw a branch, repeat. That hides real information, because HPO is actually a
+          <b>directed acyclic graph (DAG)</b> — a term can be reached through more than one parent branch.
+          For example, "Abnormality of the hand" is reachable both via
+          <i>limb → upper limb → hand</i> and via <i>skeletal system → limb bone → ...</i> — two
+          genuinely different, both-valid ways of categorizing the same finding.
+        </p>
+        <p>
+          For a clinician choosing the best-fitting HPO term for a finding, seeing only one branch can be
+          misleading — it looks like there's a single "correct" place in the hierarchy when there are
+          several legitimate ones. The graph view here always shows the <b>full ancestor closure</b> of the
+          term you've selected (every path back to the root, not just one) plus its direct children, so the
+          multi-parent structure is visible rather than hidden.
+        </p>
+      </div>
+    </details>
 
-  <section class="panel right-panel">
-    <div class="tab-bar">
-      <button class="tab-btn active" data-tab="selected">Selected HPO Terms (<span id="selected-count">0</span>)</button>
-      <button class="tab-btn" data-tab="disease">Associated Disease</button>
-      <button class="tab-btn" data-tab="gene">Associated Gene</button>
-    </div>
+    <details>
+      <summary>How do search and the graph view work?</summary>
+      <div class="hg-docs-content">
+        <p>
+          Search matches against a term's own name and its synonyms, with matches in the term's own name
+          always ranked above synonym-only matches, then sorted alphabetically.
+        </p>
+        <p>
+          Selecting a result draws that term's neighborhood: every ancestor on every path back to the root
+          (teal nodes), the term itself (dark node), and its direct children (outlined nodes). Click any
+          node to make it the new focus and reveal its own neighborhood; double-click a node — or use the
+          "+ Add to selected" button — to add it to your phenotype set on the right.
+        </p>
+      </div>
+    </details>
 
-    <div id="panel-selected" class="tab-panel">
-      <div id="selected-list" class="selected-list"></div>
-    </div>
+    <details>
+      <summary>How are diseases and genes ranked?</summary>
+      <div class="hg-docs-content">
+        <p>
+          For your selected phenotype set, each candidate disease is scored by how similar its own
+          annotated phenotypes are to yours. Two phenotypes count as "similar" if they share a
+          <b>specific</b> (rather than generic) common ancestor in the ontology — e.g. "Arachnodactyly" and
+          "Long fingers" score highly similar, while "Arachnodactyly" and "Seizure" score near zero because
+          their only shared ancestor is the near-meaningless root, "Phenotypic abnormality".
+        </p>
+        <p>
+          Concretely: for every term you selected, we find its single best-matching term on the candidate
+          disease (and vice versa, for balance), then average those best-match scores — weighted by how
+          rare/specific each matching term is, and by how often the disease's phenotype is annotated as
+          frequent vs. rare. This is the same family of method used by phenotype-matching tools like
+          Phenomizer and LIRICAL. Gene scores come from each gene's best-supporting linked disease. Click
+          any disease or gene row to see exactly which terms matched and why.
+        </p>
+        <p>
+          Diseases are split into separate OMIM / Orphanet sub-tabs since the two databases curate disease
+          definitions with different conventions and aren't always directly comparable.
+        </p>
+      </div>
+    </details>
 
-    <div id="panel-disease" class="tab-panel" style="display:none">
-      <div id="rank-status" class="rank-status"></div>
-      <div id="disease-list" class="rank-list"></div>
-    </div>
+    <details>
+      <summary>What is the "informativeness rank" shown next to a term?</summary>
+      <div class="hg-docs-content">
+        <p>
+          Separately from ranking diseases, every HPO term has its own standalone specificity score —
+          roughly, "how gene/disease-specific is this exact term on its own", combining how many genes are
+          linked to it, how many diseases annotate it, and how consistently it's reported as a frequent
+          (vs. rare/occasional) finding. This is shown as "informativeness rank #N of ~20,400" in the focus
+          bar. It's a reference number about the term itself, separate from — and not used by — the
+          disease/gene ranking above.
+        </p>
+      </div>
+    </details>
 
-    <div id="panel-gene" class="tab-panel" style="display:none">
-      <div id="gene-list" class="rank-list"></div>
-    </div>
-  </section>
+    <details>
+      <summary>How does the phenotype-set distance calculator work?</summary>
+      <div class="hg-docs-content">
+        <p>
+          Selecting two or more terms reveals a "Phenotype set relationships" panel: how many distinct
+          organ systems your selection spans, and a pairwise closeness/distance between every pair of
+          selected terms, along with their most informative shared ancestor.
+        </p>
+        <p>
+          A distance near 0 means two terms are essentially the same finding described two ways (or one is
+          a more specific version of the other). A distance near 1 means their only common ground is a very
+          generic ancestor — they're phenotypically unrelated on their own. A selection that spans many
+          organ systems, with high pairwise distances throughout, is itself a signal worth noticing: it
+          points toward a syndromic, multi-system condition rather than an isolated finding, independent of
+          what the disease/gene ranking says.
+        </p>
+      </div>
+    </details>
 
-</main>
+    <details>
+      <summary>Where does the data come from, and what are the limitations?</summary>
+      <div class="hg-docs-content">
+        <p>
+          The ontology graph, disease annotations (with frequency/onset/evidence), and gene-disease
+          associations come from the HPO Consortium's official releases (hpo.jax.org), cross-referenced
+          with HGNC gene metadata. Everything is compiled offline into one SQLite file that ships with the
+          app and runs entirely in your browser — no data you search or select ever leaves your device.
+        </p>
+        <p>
+          Known limitations: candidate disease matching relies on ancestor-closure overlap, so a disease
+          whose closest relation to a selected term is a distant "cousin" term (sharing a lower-level
+          ancestor rather than a direct ancestor/descendant) could occasionally be missed — this is rare in
+          practice for clinically specific term selections. There's no per-term severity/onset input yet,
+          and no accounts or persistence — your selected phenotype set lives only in this browser tab.
+        </p>
+      </div>
+    </details>
 
-<div id="loading-overlay" class="loading-overlay">
-  <div class="loading-box">
-    <div class="spinner"></div>
+  </div>
+</section>
+
+<div id="loading-overlay" class="hg-loading-overlay">
+  <div class="hg-loading-box">
+    <div class="hg-spinner"></div>
     <div id="loading-text">Loading…</div>
   </div>
 </div>

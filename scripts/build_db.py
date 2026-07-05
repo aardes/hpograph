@@ -242,22 +242,144 @@ def main():
             disease_terms[did].add(hid)
 
     num_diseases = len(disease_terms)
-    print(f"Computing information content over {num_diseases} diseases with P-aspect annotations...")
+    print(f"Computing disease-based information content over {num_diseases} diseases with P-aspect annotations...")
 
-    term_disease_count = defaultdict(int)
+    # term -> set of diseases annotated to it OR any of its descendants (propagated up the DAG)
+    term_diseases_propagated = defaultdict(set)
     for did, hset in disease_terms.items():
-        propagated = set()
+        propagated_terms = set()
         for h in hset:
-            propagated |= closure.get(h, {h})
-        for t in propagated:
-            term_disease_count[t] += 1
+            propagated_terms |= closure.get(h, {h})
+        for t in propagated_terms:
+            term_diseases_propagated[t].add(did)
 
     ic = {}
     for t in terms:
-        count = term_disease_count.get(t, 0)
+        count = len(term_diseases_propagated.get(t, ()))
         # Laplace smoothing: never-annotated terms get count=1 (max informativeness for this corpus)
         freq = (count if count > 0 else 1) / num_diseases
         ic[t] = -math.log(freq)
+
+    # ------------------------------------------------------------------
+    # Gene-based term specificity/informativeness scoring.
+    #
+    # Two variants are computed, deliberately different in scope:
+    #
+    # 1. `gene_ic` -- PROPAGATED (like the disease-based `ic` above): a term's
+    #    gene set is the union of genes linked to any disease annotated with
+    #    that term OR any of its descendants. This keeps IC monotonically
+    #    non-decreasing from root to leaf, which the Resnik/Lin MICA-based
+    #    similarity engine (ranking.js) depends on to behave sensibly for
+    #    ancestor terms (most of which are rarely annotated directly).
+    #    This is what powers the disease/gene ranking.
+    #
+    # 2. `direct_final_score` / `spec_rank` -- the literal formula as
+    #    specified, using ONLY each term's own direct annotations (no
+    #    ontology propagation). This is a standalone "how informative is
+    #    this exact HPO term" leaderboard metric, shown next to a term in
+    #    the UI -- not used by the similarity engine, since most internal
+    #    ontology nodes are barely ever annotated directly and would all
+    #    collapse to ~0 if used for graph similarity.
+    # ------------------------------------------------------------------
+    print("Computing gene-based term specificity scores...")
+
+    disease_genes = defaultdict(set)
+    for sym, did, assoc, ncbi in gene_disease:
+        disease_genes[did].add(sym)
+
+    total_genes_with_any_hpo = len({sym for sym, did, assoc, ncbi in gene_disease})
+
+    # --- 1. propagated gene_ic (feeds ranking.js) ---
+    gene_ic = {}
+    for t in terms:
+        gene_set = set()
+        for did in term_diseases_propagated.get(t, ()):
+            gene_set |= disease_genes.get(did, ())
+        count = len(gene_set)
+        ratio = (count if count > 0 else 1) / max(total_genes_with_any_hpo, 1)
+        gene_ic[t] = -math.log(ratio)
+
+    # --- 2. direct (non-propagated) formula, exactly as specified ---
+    term_diseases_direct = defaultdict(set)
+    for did, hset in disease_terms.items():
+        for h in hset:
+            term_diseases_direct[h].add(did)
+
+    # frequency weight per disease_hpo row (unknown frequency defaults to 0.5, same convention as ranking.js)
+    def freq_weight(f):
+        return f if f is not None else 0.5
+
+    term_freq_rows = defaultdict(list)
+    for did, hid, freq, onset, evidence, aspect, qualifier in disease_hpo:
+        if aspect == "P" and qualifier != "NOT" and hid in terms:
+            term_freq_rows[hid].append(freq)
+
+    direct_gene_count = {}
+    direct_disease_count = {}
+    direct_pair_count = {}   # gene-disease PAIRS containing this term (not distinct genes)
+    direct_frequency_support = {}
+
+    for t in terms:
+        dids = term_diseases_direct.get(t, ())
+        direct_disease_count[t] = len(dids)
+        gene_set = set()
+        pair_count = 0
+        for did in dids:
+            g = disease_genes.get(did, ())
+            gene_set |= g
+            pair_count += len(g)
+        direct_gene_count[t] = len(gene_set)
+        direct_pair_count[t] = pair_count
+
+        rows = term_freq_rows.get(t)
+        if rows:
+            direct_frequency_support[t] = sum(freq_weight(f) for f in rows) / len(rows)
+        else:
+            direct_frequency_support[t] = 0.0
+
+    # normalized_IC and gene_specificity, guarding the zero-gene-count case
+    # (no Laplace smoothing here: a term with zero direct gene evidence gets
+    # a 0 contribution rather than being artificially treated as maximally
+    # specific -- it simply has no data to be informative from).
+    raw_ic = {}
+    raw_specificity = {}
+    log_total_genes = math.log10(max(total_genes_with_any_hpo, 2))
+    for t in terms:
+        c = direct_gene_count[t]
+        if c <= 0:
+            raw_ic[t] = 0.0
+            raw_specificity[t] = 0.0
+        else:
+            raw_ic[t] = -math.log10(c / total_genes_with_any_hpo)
+            raw_specificity[t] = 1 - (math.log10(c) / log_total_genes)
+
+    max_ic = max(raw_ic.values()) if raw_ic else 1.0
+    max_pair_count = max(direct_pair_count.values()) if direct_pair_count else 1
+
+    direct_final_score = {}
+    for t in terms:
+        normalized_ic = raw_ic[t] / max_ic if max_ic > 0 else 0.0
+        gene_specificity = raw_specificity[t]
+        gene_disease_support = direct_pair_count[t] / max_pair_count if max_pair_count > 0 else 0.0
+        frequency_support = direct_frequency_support[t]
+        direct_final_score[t] = (
+            0.40 * normalized_ic
+            + 0.30 * gene_specificity
+            + 0.20 * gene_disease_support
+            + 0.10 * frequency_support
+        )
+
+    # rank 1..N: final_score DESC, disease_link_count DESC, related_gene_count ASC, hpo_id ASC
+    ordered = sorted(
+        terms.keys(),
+        key=lambda t: (
+            -direct_final_score[t],
+            -direct_disease_count[t],
+            direct_gene_count[t],
+            t,
+        ),
+    )
+    spec_rank = {t: i + 1 for i, t in enumerate(ordered)}
 
     print("Writing SQLite database...")
     conn = sqlite3.connect(args.out)
@@ -274,7 +396,12 @@ def main():
         name_lc TEXT,
         definition TEXT,
         obsolete INTEGER DEFAULT 0,
-        ic REAL
+        ic REAL,               -- disease-propagation-based IC (legacy)
+        gene_ic REAL,          -- gene-propagation-based IC (drives ranking.js similarity)
+        direct_gene_count INTEGER,
+        direct_disease_count INTEGER,
+        direct_final_score REAL,  -- literal user formula, direct annotations only
+        spec_rank INTEGER         -- 1..N leaderboard rank by direct_final_score
     );
     CREATE TABLE alt_ids (
         alt_id TEXT PRIMARY KEY,
@@ -323,8 +450,10 @@ def main():
     """)
 
     cur.executemany(
-        "INSERT INTO terms VALUES (?,?,?,?,?,?)",
-        [(tid, t["name"], t["name"].lower(), t["definition"], t["obsolete"], ic[tid])
+        "INSERT INTO terms VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+        [(tid, t["name"], t["name"].lower(), t["definition"], t["obsolete"], ic[tid],
+          gene_ic[tid], direct_gene_count[tid], direct_disease_count[tid],
+          direct_final_score[tid], spec_rank[tid])
          for tid, t in terms.items()]
     )
     cur.executemany("INSERT INTO alt_ids VALUES (?,?)", list(alt_ids.items()))
@@ -349,6 +478,7 @@ def main():
 
     cur.executescript("""
     CREATE INDEX idx_terms_name_lc ON terms(name_lc);
+    CREATE INDEX idx_terms_spec_rank ON terms(spec_rank);
     CREATE INDEX idx_syn_lc ON synonyms(synonym_lc);
     CREATE INDEX idx_syn_term ON synonyms(term_id);
     CREATE INDEX idx_edges_child ON edges(child);
@@ -366,6 +496,7 @@ def main():
         ("num_diseases_scored", str(num_diseases)),
         ("num_terms", str(len(terms))),
         ("num_genes", str(len(genes))),
+        ("total_genes_with_any_hpo", str(total_genes_with_any_hpo)),
     ])
 
     conn.commit()

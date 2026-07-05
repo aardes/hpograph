@@ -64,7 +64,10 @@ const HPOGraph = (() => {
       });
     }
     for (const e of edges) {
-      elements.push({ data: { id: `${e.child}->${e.parent}`, source: e.child, target: e.parent } });
+      // source=parent, target=child so a top-to-bottom (TB) dagre layout puts
+      // the root at the top and leaves toward the bottom, matching how
+      // clinicians expect the ontology hierarchy to read.
+      elements.push({ data: { id: `${e.child}->${e.parent}`, source: e.parent, target: e.child } });
     }
 
     if (cy) {
@@ -80,22 +83,22 @@ const HPOGraph = (() => {
           style: {
             label: "data(label)",
             "text-wrap": "wrap",
-            "text-max-width": "120px",
+            "text-max-width": "100px",
             "font-size": "9px",
             "text-valign": "bottom",
             "text-margin-y": 6,
-            "background-color": "#5ecfc9",
+            "background-color": "#18B8A0",
             width: 16,
             height: 16,
             "border-width": 2,
-            "border-color": "#3aa9a3",
+            "border-color": "#0e8f7c",
           },
         },
         {
           selector: "node[role = 'focus']",
           style: {
-            "background-color": "#1c3d5a",
-            "border-color": "#1c3d5a",
+            "background-color": "#0B1220",
+            "border-color": "#0B1220",
             width: 22,
             height: 22,
             "font-weight": "bold",
@@ -105,14 +108,14 @@ const HPOGraph = (() => {
           selector: "node[role = 'child']",
           style: {
             "background-color": "#ffffff",
-            "border-color": "#5ecfc9",
+            "border-color": "#18B8A0",
           },
         },
         {
           selector: "edge",
           style: {
             width: 1.5,
-            "line-color": "#c7d3d6",
+            "line-color": "#d7dee0",
             "target-arrow-shape": "none",
             "curve-style": "bezier",
           },
@@ -135,14 +138,29 @@ const HPOGraph = (() => {
     // cytoscape-dagre extension failed to load (e.g. CDN hiccup), fall back
     // to cytoscape's built-in breadthfirst layout so the graph still renders.
     try {
-      const layout = cy.layout({ name: "dagre", rankDir: "TB", nodeSep: 20, rankSep: 50 });
+      const layout = cy.layout({ name: "dagre", rankDir: "TB", nodeSep: 130, edgeSep: 20, rankSep: 80 });
       layout.run();
     } catch (err) {
       console.warn("dagre layout unavailable, falling back to breadthfirst:", err);
       cy.layout({ name: "breadthfirst", directed: true, spacingFactor: 1.2 }).run();
     }
 
+    // cy.fit() zooms out to fit every node on screen, which makes labels
+    // unreadable for high fan-out terms (e.g. a term with 20+ children).
+    // Fit first (so panning/zoom bounds are sane), then clamp to a minimum
+    // readable zoom and re-center on the focused node -- any nodes that no
+    // longer fit are still reachable by panning/scrolling.
     cy.fit(undefined, 30);
+    const MIN_ZOOM = 0.85;
+    const MAX_ZOOM = 1.4;
+    const clamped = Math.min(Math.max(cy.zoom(), MIN_ZOOM), MAX_ZOOM);
+    if (clamped !== cy.zoom()) {
+      cy.zoom(clamped);
+    }
+    const focusNode = cy.getElementById(focusId);
+    if (focusNode && focusNode.length) {
+      cy.center(focusNode);
+    }
   }
 
   return { render, directParents, directChildren, termInfo };

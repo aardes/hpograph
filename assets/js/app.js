@@ -1,10 +1,21 @@
-// app.js -- main UI controller wiring search, graph, selected terms, and ranking tabs.
+// app.js -- single search box drives the graph (left panel); the right panel
+// owns the multi-term selection, the disease/gene ranking, and the
+// phenotype-set relationship view.
 
-(() => {
+const HPOApp = (() => {
+  const DB_LABELS = { OMIM: "OMIM", ORPHA: "Orphanet (ORPHA)", DECIPHER: "DECIPHER" };
+  const DB_ORDER = ["OMIM", "ORPHA", "DECIPHER"];
+  const ROWS_PER_SOURCE = 50;
+
   const state = {
-    focusId: "HP:0000118", // "Phenotypic abnormality" as a sane default focus
+    focusId: null,
     selected: new Map(), // id -> {id, name}
     activeTab: "selected",
+    activeDiseaseSource: "OMIM",
+    lastDiseaseScores: [],
+    lastGeneScores: [],
+    expandedDiseaseIds: new Set(),
+    expandedGeneSymbols: new Set(),
   };
 
   const el = {
@@ -16,8 +27,11 @@
     focusLabel: document.getElementById("focus-label"),
     addFocusBtn: document.getElementById("add-focus-btn"),
     selectedList: document.getElementById("selected-list"),
-    selectedCount: document.getElementById("selected-count"),
-    tabs: document.querySelectorAll(".tab-btn"),
+    relationshipsPanel: document.getElementById("relationships-panel"),
+    tabSelected: document.getElementById("tab-selected"),
+    tabDisease: document.getElementById("tab-disease"),
+    tabGene: document.getElementById("tab-gene"),
+    tabs: document.querySelectorAll(".hg-tab-btn"),
     panels: {
       selected: document.getElementById("panel-selected"),
       disease: document.getElementById("panel-disease"),
@@ -45,8 +59,8 @@
     });
     Ranking.loadGraph();
     setLoading(false);
-    focusOn(state.focusId);
     wireEvents();
+    renderSelectedList();
   }
 
   function wireEvents() {
@@ -57,7 +71,9 @@
         el.searchResults.style.display = "none";
       }
     });
-    el.addFocusBtn.addEventListener("click", () => addTerm(state.focusId));
+    el.addFocusBtn.addEventListener("click", () => {
+      if (state.focusId) addTerm(state.focusId);
+    });
 
     el.tabs.forEach((btn) => {
       btn.addEventListener("click", () => switchTab(btn.dataset.tab));
@@ -70,19 +86,32 @@
       el.searchResults.style.display = "none";
       return;
     }
-    const like = `%${q.toLowerCase()}%`;
+    const qlc = q.toLowerCase();
+    const like = `%${qlc}%`;
     const idMatch = /^HP:\d+$/i.test(q);
     let rows;
     if (idMatch) {
       rows = HPODB.all("SELECT id, name FROM terms WHERE id = ? AND obsolete = 0", [q.toUpperCase()]);
     } else {
+      // Rank name matches above synonym-only matches (a synonym hit on a
+      // short-named, unrelated-looking term used to outrank an actual
+      // substring match in the term's own name -- e.g. searching "finger"
+      // surfaced "Clubbing" before "Finger pain").
       rows = HPODB.all(
-        `SELECT DISTINCT t.id, t.name FROM terms t
+        `SELECT t.id, t.name, MIN(
+           CASE
+             WHEN t.name_lc LIKE ? THEN 0
+             WHEN s.synonym_lc LIKE ? THEN 1
+             ELSE 2
+           END
+         ) AS match_rank
+         FROM terms t
          LEFT JOIN synonyms s ON s.term_id = t.id
          WHERE t.obsolete = 0 AND (t.name_lc LIKE ? OR s.synonym_lc LIKE ?)
-         ORDER BY LENGTH(t.name) ASC
+         GROUP BY t.id
+         ORDER BY match_rank ASC, t.name_lc ASC
          LIMIT 25`,
-        [like, like]
+        [like, like, like, like]
       );
     }
     renderSearchResults(rows);
@@ -96,8 +125,8 @@
     }
     for (const r of rows) {
       const div = document.createElement("div");
-      div.className = "search-result-item";
-      div.innerHTML = `<span class="hpo-id">${r.id}</span> ${escapeHtml(r.name)}`;
+      div.className = "hg-search-result-item";
+      div.innerHTML = `<span class="hg-id">${r.id}</span> ${escapeHtml(r.name)}`;
       div.addEventListener("click", () => {
         el.searchResults.style.display = "none";
         el.searchInput.value = "";
@@ -112,7 +141,25 @@
     const info = HPOGraph.termInfo(termId);
     if (!info) return;
     state.focusId = termId;
-    el.focusLabel.innerHTML = `<span class="hpo-id">${termId}</span> ${escapeHtml(info.name)}`;
+
+    const spec = HPODB.one(
+      "SELECT spec_rank, direct_final_score, direct_gene_count, direct_disease_count FROM terms WHERE id=?",
+      [termId]
+    );
+    const totalTerms = HPODB.one("SELECT COUNT(*) AS n FROM terms WHERE obsolete=0")?.n ?? 0;
+    let specLine = "";
+    if (spec) {
+      specLine = `
+        <div class="hg-focus-spec">
+          Informativeness rank <b>#${spec.spec_rank.toLocaleString()}</b> of ${totalTerms.toLocaleString()}
+          (score ${spec.direct_final_score.toFixed(2)}) ·
+          ${spec.direct_gene_count} gene${spec.direct_gene_count === 1 ? "" : "s"},
+          ${spec.direct_disease_count} disease${spec.direct_disease_count === 1 ? "" : "s"} (direct annotations)
+        </div>`;
+    }
+    el.focusLabel.innerHTML = `<span class="hg-id">${termId}</span> ${escapeHtml(info.name)}${specLine}`;
+    el.addFocusBtn.disabled = false;
+
     HPOGraph.render(el.graphContainer, termId, {
       onNodeClick: (id) => focusOn(id),
       onAdd: (id) => addTerm(id),
@@ -139,23 +186,65 @@
   }
 
   function renderSelectedList() {
-    el.selectedCount.textContent = state.selected.size;
+    el.tabSelected.textContent = `Selected (${state.selected.size})`;
     el.selectedList.innerHTML = "";
     if (!state.selected.size) {
-      el.selectedList.innerHTML = '<div class="empty-hint">No HPO terms selected yet. Search above or click a node in the graph, then "Add" it.</div>';
+      el.selectedList.innerHTML =
+        '<div class="hg-empty">No HPO terms selected yet. Search above, then "Add to selected".</div>';
+    } else {
+      for (const { id, name } of state.selected.values()) {
+        const row = document.createElement("div");
+        row.className = "hg-selected-row";
+        row.innerHTML = `
+          <button class="hg-remove-btn" title="Remove">✕</button>
+          <span class="hg-id">${id}</span>
+          <span class="hg-term-name">${escapeHtml(name)}</span>
+        `;
+        row.querySelector(".hg-remove-btn").addEventListener("click", () => removeTerm(id));
+        el.selectedList.appendChild(row);
+      }
+    }
+    renderRelationships();
+  }
+
+  // ---- phenotype-set relationships: how close/far are the selected terms
+  // from each other, and how many organ systems do they span? ----
+  function renderRelationships() {
+    const ids = Array.from(state.selected.keys());
+    if (ids.length < 2) {
+      el.relationshipsPanel.innerHTML = "";
       return;
     }
-    for (const { id, name } of state.selected.values()) {
-      const row = document.createElement("div");
-      row.className = "selected-row";
-      row.innerHTML = `
-        <button class="remove-btn" title="Remove">✕</button>
-        <span class="hpo-id">${id}</span>
-        <span class="term-name">${escapeHtml(name)}</span>
-      `;
-      row.querySelector(".remove-btn").addEventListener("click", () => removeTerm(id));
-      el.selectedList.appendChild(row);
+
+    const allCats = new Map(); // id -> name
+    for (const id of ids) {
+      for (const c of Ranking.categoriesFor(id)) allCats.set(c.id, c.name);
     }
+
+    const pairs = Ranking.pairwiseDistances(ids);
+    pairs.sort((a, b) => a.distance - b.distance);
+
+    el.relationshipsPanel.innerHTML = `
+      <div class="hg-rel-head">Phenotype set relationships</div>
+      <div class="hg-rel-cats">
+        <b>${allCats.size}</b> organ system${allCats.size === 1 ? "" : "s"} spanned:
+        ${Array.from(allCats.values()).map((n) => `<span class="hg-pill blue">${escapeHtml(n)}</span>`).join(" ")}
+      </div>
+      <div class="hg-rel-table">
+        ${pairs
+          .map(
+            (p) => `
+          <div class="hg-rel-row">
+            <div class="hg-rel-pair"><span class="hg-id">${p.a}</span> ${escapeHtml(p.aName)} &harr; <span class="hg-id">${p.b}</span> ${escapeHtml(p.bName)}</div>
+            <div class="hg-rel-meta">
+              closeness ${(p.similarity * 100).toFixed(0)}% · distance ${(p.distance * 100).toFixed(0)}%
+              · shared ancestor: ${p.micaName ? escapeHtml(p.micaName) : "—"}
+            </div>
+          </div>`
+          )
+          .join("")}
+      </div>
+    `;
   }
 
   function switchTab(tab) {
@@ -177,6 +266,8 @@
       el.rankStatus.textContent = "Select one or more HPO terms to see ranked diseases and genes.";
       el.diseaseList.innerHTML = "";
       el.geneList.innerHTML = "";
+      el.tabDisease.textContent = "Diseases";
+      el.tabGene.textContent = "Genes";
       return;
     }
     el.rankStatus.textContent = `Scoring against ${terms.length} selected term(s)…`;
@@ -190,9 +281,16 @@
 
     if (myToken !== rankingToken) return; // stale, a newer ranking has started
 
+    state.lastDiseaseScores = diseaseScores;
+    state.lastGeneScores = geneScores;
+    state.expandedDiseaseIds.clear();
+    state.expandedGeneSymbols.clear();
+
     el.rankStatus.textContent = `${diseaseScores.length} candidate diseases scored in ${elapsed} ms.`;
-    renderDiseaseList(diseaseScores.slice(0, 50));
-    renderGeneList(geneScores.slice(0, 50));
+    el.tabDisease.textContent = `Diseases (${diseaseScores.length})`;
+    el.tabGene.textContent = `Genes (${geneScores.length})`;
+    renderDiseaseList();
+    renderGeneList();
   }
 
   function diseaseName(id) {
@@ -200,52 +298,187 @@
     return row ? row.name : id;
   }
 
-  function renderDiseaseList(scores) {
+  // Score -> a position on a rainbow (blue = low, through green/yellow, to
+  // red = high), plus a bar filled to the score's width -- both the fill
+  // amount and the hue communicate the magnitude.
+  function scoreColor(pct) {
+    const clamped = Math.min(Math.max(pct, 0), 100);
+    const hue = 240 - (clamped / 100) * 240; // 240=blue -> 120=green -> 0=red
+    return `hsl(${hue.toFixed(0)}, 75%, 48%)`;
+  }
+
+  function renderDiseaseList() {
+    const scores = state.lastDiseaseScores;
     el.diseaseList.innerHTML = "";
     if (!scores.length) {
-      el.diseaseList.innerHTML = '<div class="empty-hint">No matching diseases found for this term set.</div>';
+      el.diseaseList.innerHTML = '<div class="hg-empty">No matching diseases found for this term set.</div>';
       return;
     }
-    for (const { diseaseId, score, nTerms } of scores) {
-      const name = diseaseName(diseaseId);
-      const pct = Math.round(score * 100);
-      const row = document.createElement("div");
-      row.className = "rank-row";
-      row.innerHTML = `
-        <div class="rank-bar" style="width:${pct}%"></div>
-        <div class="rank-row-content">
-          <span class="rank-score">${pct}%</span>
-          <span class="hpo-id">${diseaseId}</span>
-          <span class="term-name">${escapeHtml(name)}</span>
-          <span class="rank-meta">${nTerms} annotated terms</span>
-        </div>
+
+    const byDb = { OMIM: [], ORPHA: [], DECIPHER: [] };
+    for (const s of scores) {
+      const db = s.diseaseId.split(":")[0];
+      (byDb[db] || (byDb[db] = [])).push(s);
+    }
+
+    const availableSources = DB_ORDER.filter((db) => byDb[db] && byDb[db].length);
+    if (!availableSources.includes(state.activeDiseaseSource)) {
+      state.activeDiseaseSource = availableSources[0] || "OMIM";
+    }
+
+    const subtabs = `
+      <div class="hg-subtab-bar">
+        ${availableSources
+          .map(
+            (db) => `
+          <button class="hg-subtab-btn ${db === state.activeDiseaseSource ? "active" : ""}" data-source="${db}">
+            ${DB_LABELS[db] || db} (${byDb[db].length})
+          </button>`
+          )
+          .join("")}
+      </div>
+    `;
+
+    const patientTerms = Array.from(state.selected.keys());
+    const list = byDb[state.activeDiseaseSource] || [];
+    const shown = list.slice(0, ROWS_PER_SOURCE);
+    const rowsHtml = `
+      ${shown.map((s) => diseaseRowHtml(s)).join("")}
+      ${list.length > ROWS_PER_SOURCE ? `<div class="hg-empty">Showing top ${ROWS_PER_SOURCE} of ${list.length} ${DB_LABELS[state.activeDiseaseSource]} matches.</div>` : ""}
+    `;
+
+    el.diseaseList.innerHTML = subtabs + rowsHtml;
+
+    el.diseaseList.querySelectorAll("[data-source]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        state.activeDiseaseSource = btn.dataset.source;
+        renderDiseaseList();
+      });
+    });
+
+    el.diseaseList.querySelectorAll("[data-toggle-disease]").forEach((elm) => {
+      elm.addEventListener("click", () => {
+        const id = elm.dataset.toggleDisease;
+        if (state.expandedDiseaseIds.has(id)) state.expandedDiseaseIds.delete(id);
+        else state.expandedDiseaseIds.add(id);
+        renderDiseaseList();
+      });
+    });
+    for (const did of state.expandedDiseaseIds) {
+      const holder = el.diseaseList.querySelector(`[data-detail-disease="${cssId(did)}"]`);
+      if (!holder) continue;
+      const matches = Ranking.explainDisease(patientTerms, did);
+      holder.innerHTML = `
+        <div class="hg-explain-head">Which selected terms matched, and to what on this disease:</div>
+        ${matches
+          .map(
+            (m) => `
+          <div class="hg-explain-row">
+            <span class="hg-id">${m.patientTerm}</span> ${escapeHtml(m.patientTermName)}
+            &rarr; <span class="hg-id">${m.diseaseTerm || "—"}</span> ${escapeHtml(m.diseaseTermName || "no match")}
+            <span class="hg-rank-meta">similarity ${((m.sim || 0) * 100).toFixed(0)}%${
+              m.frequency != null ? ` · frequency ${(m.frequency * 100).toFixed(0)}%` : " · frequency unknown (assumed 50%)"
+            }</span>
+          </div>`
+          )
+          .join("")}
       `;
-      el.diseaseList.appendChild(row);
     }
   }
 
-  function renderGeneList(scores) {
+  function diseaseRowHtml({ diseaseId, score, nTerms }) {
+    const name = diseaseName(diseaseId);
+    const pct = Math.round(score * 100);
+    const expanded = state.expandedDiseaseIds.has(diseaseId);
+    return `
+      <div class="hg-rank-row ${expanded ? "expanded" : ""}" data-toggle-disease="${diseaseId}">
+        <div class="hg-rank-bar" style="width:${pct}%; background:${scoreColor(pct)}"></div>
+        <div class="hg-rank-row-content">
+          <span class="hg-rank-score">${pct}%</span>
+          <span class="hg-id">${diseaseId}</span>
+          <span class="hg-term-name">${escapeHtml(name)}</span>
+          <span class="hg-rank-meta">${nTerms} annotated terms · click to see why</span>
+        </div>
+        ${expanded ? `<div class="hg-explain-box" data-detail-disease="${cssId(diseaseId)}"></div>` : ""}
+      </div>
+    `;
+  }
+
+  function renderGeneList() {
+    const scores = state.lastGeneScores;
     el.geneList.innerHTML = "";
     if (!scores.length) {
-      el.geneList.innerHTML = '<div class="empty-hint">No matching genes found for this term set.</div>';
+      el.geneList.innerHTML = '<div class="hg-empty">No matching genes found for this term set.</div>';
       return;
     }
-    for (const { symbol, score, bestDisease, nMatchedDiseases, associationTypes } of scores) {
-      const pct = Math.round(score * 100);
-      const name = diseaseName(bestDisease);
-      const row = document.createElement("div");
-      row.className = "rank-row";
-      row.innerHTML = `
-        <div class="rank-bar" style="width:${pct}%"></div>
-        <div class="rank-row-content">
-          <span class="rank-score">${pct}%</span>
-          <span class="gene-symbol">${escapeHtml(symbol)}</span>
-          <span class="term-name">best match: ${escapeHtml(name)}</span>
-          <span class="rank-meta">${nMatchedDiseases} linked disease(s) · ${associationTypes.join(", ").toLowerCase()}</span>
+    const shown = scores.slice(0, 50);
+    el.geneList.innerHTML = shown.map((g) => geneRowHtml(g)).join("");
+    if (scores.length > 50) {
+      el.geneList.innerHTML += `<div class="hg-empty">Showing top 50 of ${scores.length} genes.</div>`;
+    }
+
+    el.geneList.querySelectorAll("[data-toggle-gene]").forEach((elm) => {
+      elm.addEventListener("click", () => {
+        const sym = elm.dataset.toggleGene;
+        if (state.expandedGeneSymbols.has(sym)) state.expandedGeneSymbols.delete(sym);
+        else state.expandedGeneSymbols.add(sym);
+        renderGeneList();
+      });
+    });
+
+    for (const sym of state.expandedGeneSymbols) {
+      const holder = el.geneList.querySelector(`[data-detail-gene="${cssId(sym)}"]`);
+      if (!holder) continue;
+      const gene = shown.find((g) => g.symbol === sym) || scores.find((g) => g.symbol === sym);
+      if (!gene) continue;
+      holder.innerHTML = `
+        <div class="hg-explain-head">All linked diseases that matched (not just the best one):</div>
+        ${gene.diseases
+          .map(
+            (d) => `
+          <div class="hg-explain-row">
+            <span class="hg-id">${d.diseaseId}</span> ${escapeHtml(diseaseName(d.diseaseId))}
+            <span class="hg-rank-meta">${Math.round(d.score * 100)}% match · association: ${associationLabel(d.associationType)}</span>
+          </div>`
+          )
+          .join("")}
+        <div class="hg-explain-note">
+          "Association: unknown" means the source database (usually Orphanet) linked this gene to the
+          disease without classifying it as Mendelian or polygenic — it's a gap in the source data's
+          labeling, not an uncertain match.
         </div>
       `;
-      el.geneList.appendChild(row);
     }
+  }
+
+  function associationLabel(type) {
+    if (!type) return "unknown";
+    return type.toLowerCase();
+  }
+
+  function geneRowHtml({ symbol, score, nMatchedDiseases, associationTypes }) {
+    const pct = Math.round(score * 100);
+    const expanded = state.expandedGeneSymbols.has(symbol);
+    const hasUnknown = associationTypes.some((t) => (t || "").toUpperCase() === "UNKNOWN");
+    return `
+      <div class="hg-rank-row ${expanded ? "expanded" : ""}" data-toggle-gene="${symbol}">
+        <div class="hg-rank-bar" style="width:${pct}%; background:${scoreColor(pct)}"></div>
+        <div class="hg-rank-row-content">
+          <span class="hg-rank-score">${pct}%</span>
+          <span class="hg-gene-symbol">${escapeHtml(symbol)}</span>
+          <span class="hg-rank-meta">
+            ${nMatchedDiseases} linked disease(s) · ${associationTypes.map(associationLabel).join(", ")}
+            ${hasUnknown ? '<span title="Source database did not classify this association">ⓘ</span>' : ""}
+            · click to see all
+          </span>
+        </div>
+        ${expanded ? `<div class="hg-explain-box" data-detail-gene="${cssId(symbol)}"></div>` : ""}
+      </div>
+    `;
+  }
+
+  function cssId(str) {
+    return str.replace(/[^a-zA-Z0-9]/g, "_");
   }
 
   function escapeHtml(str) {
@@ -258,4 +491,8 @@
     console.error(err);
     setLoading(true, "Failed to load: " + err.message);
   });
+
+  return { addTerm, removeTerm };
 })();
+
+window.HPOApp = HPOApp;
