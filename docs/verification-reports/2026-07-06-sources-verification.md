@@ -8,6 +8,13 @@ kind — see `MAINTENANCE.md` for the reusable monthly checklist this
 supports. Re-run the checks below (or a Claude session) periodically and
 save a new dated file alongside this one rather than editing it in place.
 
+The structured numbers behind this report are also captured as
+`docs/verification-reports/data/202607.json`, which feeds the growth
+charts and comparison table on
+[`docs/verification-reports/index.html`](index.html) — this prose file is
+the "why", that JSON file (and the ones that follow it each month) is the
+"what changed."
+
 ## 1. Source-by-source verification
 
 | Local filename (in `raw_data/`) | Source | URL used by `update_data.py` | Required? | Reachability |

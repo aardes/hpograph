@@ -57,6 +57,7 @@ diagnostic accuracy.
 - [Project layout](#project-layout)
 - [Deploying](#deploying-cloudflare-workers)
 - [Versioning / data provenance](#versioning--data-provenance)
+- [Data verification history](#data-verification-history)
 - [Testing / smoke checks](#testing--smoke-checks)
 - [Data Sources and Third-Party Terms](#data-sources-and-third-party-terms)
 - [Citation](#citation)
@@ -589,6 +590,22 @@ Older databases built before `schema_version` existed won't have these keys;
 the app treats every `meta` lookup as optional and falls back to "not
 recorded for this build" rather than failing, so a missing key never breaks
 the UI.
+
+## Data verification history
+
+The **"Data verification report"** link in the app header opens
+[`docs/verification-reports/index.html`](docs/verification-reports/index.html),
+a standalone page tracking the same numbers above over time: HPO term/
+disease/gene counts, database size, ClinGen/Mondo coverage, and source
+reachability, one snapshot per month. It renders growth charts and a
+last-5-months comparison table from small JSON files —
+`docs/verification-reports/data/<YYYYMM>.json` (e.g. `202607.json`),
+indexed by `docs/verification-reports/data/manifest.json` — rather than
+scraping the database itself, so the page stays lightweight and works
+identically locally or deployed. Each JSON snapshot has an accompanying
+prose write-up under `docs/verification-reports/<date>-sources-verification.md`
+with the full reasoning behind that month's findings. See `MAINTENANCE.md`
+for how to add a new monthly snapshot.
 
 ## Testing / smoke checks
 

@@ -86,19 +86,49 @@ skim it every few months even if nothing looks obviously wrong:
       and README both describe it, in the same place (README should say
       which tab something lives on, matching the actual tab bar).
 
-## 4. Commit and deploy
+## 4. Record this month's verification snapshot
+
+The "Data verification report" page (linked from the app header, next to
+"How this works") reads small JSON snapshots — this step is what keeps it
+current. Takes a few minutes once you have the numbers from steps 1-2.
+
+- [ ] Create `docs/verification-reports/data/<YYYYMM>.json` (e.g.
+      `202608.json` for August 2026), copying the structure of the previous
+      month's file. Fill in: the `meta` table values pulled in step 2, the
+      `data/hpo.db(.gz)` sizes, the `table_counts` for `terms`, `disease`,
+      `gene`, `gene_disease`, `clingen_validity`,
+      `clingen_dosage_actionability`, `mondo_xref`, which sources actually
+      downloaded successfully this round (and how, if any needed a manual
+      step), whether the section-3 doc cross-checks all passed, and any new
+      `known_gaps` worth flagging for next month.
+- [ ] Add the new period key to
+      `docs/verification-reports/data/manifest.json`'s `periods` array (keep
+      it sorted oldest-to-newest; the page itself also sorts defensively).
+- [ ] Validate both JSON files parse: `python3 -c "import json; [json.load(open(f)) for f in ['docs/verification-reports/data/manifest.json', 'docs/verification-reports/data/<YYYYMM>.json']]"`.
+- [ ] Optional but recommended: also write a short prose report at
+      `docs/verification-reports/<date>-sources-verification.md` (see the
+      2026-07-06 one for the format) with the reasoning behind anything
+      unusual this month — the JSON is what the page renders, the prose
+      report is what a human reads later to understand *why*.
+- [ ] Open `docs/verification-reports/index.html` locally
+      (`python3 -m http.server` from the repo root, then visit
+      `/docs/verification-reports/`) and confirm the new month shows up in
+      the growth charts and the "compare last 5" table before committing.
+
+## 5. Commit and deploy
 
 - [ ] `git status --short` and `git diff --stat` **before** staging —
       this project has previously shipped a push that silently excluded
       `data/hpo.db.gz`, so don't assume; check.
 - [ ] Stage everything that actually changed, including `data/hpo.db.gz`
-      itself and anything in `raw_data/`-adjacent tracked files (there
-      shouldn't be any — `raw_data/` is gitignored).
+      itself, the new `docs/verification-reports/data/*.json` files, and
+      anything in `raw_data/`-adjacent tracked files (there shouldn't be
+      any — `raw_data/` is gitignored).
 - [ ] Commit with a message noting what was refreshed (e.g. "Monthly data
       refresh: HPO 2026-08 release, HGNC 2026-08-01, Mondo v2026-08-xx").
 - [ ] `git push`. Cloudflare redeploys automatically on push to `main`.
 
-## 5. Verify the live deploy
+## 6. Verify the live deploy
 
 - [ ] `curl -sI https://hpograph.amin-davani.workers.dev/data/hpo.db.gz | head -5`
       — confirm `200` and a `content-length` matching the file you just
@@ -112,11 +142,6 @@ skim it every few months even if nothing looks obviously wrong:
       missing immediately after pushing.
 - [ ] Check the footer's build-info tooltip on the live site reflects
       today's `build_date` and the new source filenames.
-
-## Optional: keep a dated report
-
-Consider saving a short dated note under `docs/verification-reports/` each
-time you do a full pass through section 3 above (not every month — just
-whenever you actually re-verify everything, e.g. after a schema change or
-every few months) — see `docs/verification-reports/2026-07-06-sources-verification.md`
-for the format used for the first one.
+- [ ] Open the live `docs/verification-reports/index.html` and confirm the
+      new month's data loaded correctly there too (same cache-busting
+      caveat applies).

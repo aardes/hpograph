@@ -1,0 +1,112 @@
+{
+  "period": "2026-07",
+  "period_key": "202607",
+  "report_date": "2026-07-06",
+  "narrative_report": "docs/verification-reports/2026-07-06-sources-verification.md",
+  "database": {
+    "build_date": "2026-07-05",
+    "schema_version": "1.3",
+    "size_bytes": 47726592,
+    "gz_size_bytes": 12162040,
+    "num_terms": 20413,
+    "num_diseases_scored": 12935,
+    "num_genes": 45003,
+    "total_genes_with_any_hpo": 5524,
+    "num_clingen_validity_rows": 3642,
+    "num_mondo_xref_rows": 19830
+  },
+  "table_counts": {
+    "terms": 20413,
+    "disease": 12956,
+    "gene": 45003,
+    "gene_disease": 15944,
+    "clingen_validity": 3642,
+    "clingen_dosage_actionability": 2658,
+    "mondo_xref": 19830
+  },
+  "sources": [
+    {
+      "name": "HPO ontology",
+      "local_filename": "hp.json",
+      "url": "https://github.com/obophenotype/human-phenotype-ontology/releases/latest/download/hp.json",
+      "required": true,
+      "reachability": "verified_via_release_listing",
+      "notes": "Confirmed present as a 22MB asset on release v2026-06-23 via the GitHub releases asset listing. Direct byte-fetch of the release-asset URL itself was not confirmed by this tool (see narrative report note (a)); expected to work via update_data.py's plain urllib request."
+    },
+    {
+      "name": "HPO disease annotations",
+      "local_filename": "phenotype.hpoa",
+      "url": "https://github.com/obophenotype/human-phenotype-ontology/releases/latest/download/phenotype.hpoa",
+      "required": true,
+      "reachability": "verified_via_release_listing",
+      "notes": "Confirmed present as a 34MB asset on release v2026-06-23. Same caveat as hp.json above."
+    },
+    {
+      "name": "HPO gene-disease associations",
+      "local_filename": "genes_to_disease.txt",
+      "url": "https://github.com/obophenotype/human-phenotype-ontology/releases/latest/download/genes_to_disease.txt",
+      "required": true,
+      "reachability": "verified_via_release_listing",
+      "notes": "Confirmed present as a 1.41MB asset on release v2026-06-23. Same caveat as hp.json above."
+    },
+    {
+      "name": "HGNC complete gene set",
+      "local_filename": "hgnc_complete_set.tsv",
+      "url": "https://storage.googleapis.com/public-download-files/hgnc/tsv/tsv/hgnc_complete_set.txt",
+      "required": true,
+      "reachability": "verified_direct",
+      "notes": "Direct fetch succeeded; real TSV content retrieved."
+    },
+    {
+      "name": "Mondo to OMIM exact-match crosswalk",
+      "local_filename": "mondo_exactmatch_omim.sssom.tsv",
+      "url": "https://raw.githubusercontent.com/monarch-initiative/mondo/master/src/ontology/mappings/mondo_exactmatch_omim.sssom.tsv",
+      "required": false,
+      "reachability": "verified_direct",
+      "notes": "Direct fetch succeeded; 585 lines of real SSSOM content retrieved."
+    },
+    {
+      "name": "Mondo full mapping set (Orphanet exact-match subset extracted by build_db.py)",
+      "local_filename": "mondo.sssom.tsv",
+      "url": "https://raw.githubusercontent.com/monarch-initiative/mondo/master/src/ontology/mappings/mondo.sssom.tsv",
+      "required": false,
+      "reachability": "verified_reachable_partial",
+      "notes": "Real file is 12.5MB (per GitHub's own file view); only the first ~78KB was retrievable through this tool's fetch size cap, but that partial content was valid SSSOM data, and update_data.py's plain urllib download has no such cap."
+    },
+    {
+      "name": "ClinGen gene-disease validity summary",
+      "local_filename": "Clingen-Gene-Disease-Summary*.csv",
+      "url": null,
+      "required": false,
+      "reachability": "not_automatable",
+      "notes": "No stable, unauthenticated URL found (checked the interactive downloads page, the public FTP mirror, and the documents page). Manual download required each month."
+    },
+    {
+      "name": "ClinGen dosage sensitivity / actionability summary",
+      "local_filename": "Clingen-Curation-Activity-Summary*.csv",
+      "url": null,
+      "required": false,
+      "reachability": "not_automatable",
+      "notes": "Same as above."
+    }
+  ],
+  "documentation_consistency": {
+    "schema_version_matches_readme": true,
+    "meta_keys_match_readme": true,
+    "file_size_mentions_match": true,
+    "notice_accurate": true,
+    "citation_date_matches": true,
+    "filename_compatibility_update_data_to_build_db": true
+  },
+  "deployment": {
+    "live_url": "https://hpograph.amin-davani.workers.dev",
+    "hpo_db_gz_committed_matches_working_tree": true,
+    "cache_check_passed": true,
+    "notes": "First fetch of the bare URL right after a push returned a stale cached page; a cache-busted fetch immediately showed the correct, up-to-date content. Documented in DEPLOYMENT.md."
+  },
+  "known_gaps": [
+    "hpo_source and hgnc_source meta fields are generic placeholder text this build, not an actual captured version string -- check whether a fresh update_data.py run resolves this.",
+    "ClinGen's two summary CSVs still require a manual download every month; no stable URL exists.",
+    "The three HPO GitHub release-asset URLs could not be independently byte-verified by this tool (empty response, but the same failure occurs for an unrelated repo's release asset too, indicating a tool limitation rather than a broken URL) -- confirm on first real update_data.py run."
+  ]
+}
