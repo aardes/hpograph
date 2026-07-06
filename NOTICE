@@ -53,11 +53,21 @@ subject to their own respective terms:
     Clinical Genome Resource (www.clinicalgenome.org): Gene-Disease Validity
     classifications, Gene Dosage Sensitivity classifications, and Clinical
     Actionability scores." See https://clinicalgenome.org/docs/terms-of-use/
-    for full terms. ClinGen curations are joined into HPOGraph's data by
-    gene symbol only -- ClinGen keys its curations by MONDO disease ID, and
-    no reliable, simple MONDO-to-OMIM/Orphanet crosswalk is used here, so
-    ClinGen information should be read as "this gene, independent of the
-    specific candidate disease" rather than tied to one disease entry.
+    for full terms. ClinGen keys its curations by Mondo Disease Ontology ID;
+    HPOGraph attaches most of these to a specific candidate disease using
+    the Mondo crosswalk below, falling back to gene-level matching only
+    where no exact Mondo match is available for that disease.
+
+  - Mondo Disease Ontology exact-match crosswalk -- mappings from Mondo IDs
+    to OMIM and Orphanet identifiers (mondo_exactmatch_omim.sssom.tsv and
+    the Orphanet subset of mondo.sssom.tsv), used solely to resolve which
+    specific candidate disease a ClinGen curation applies to. Published by
+    the Monarch Initiative (https://github.com/monarch-initiative/mondo)
+    under CC BY 4.0; Mondo's dedicated OMIM exact-match mapping file is
+    additionally released under CC0 1.0. Only identifier-to-identifier
+    correspondences to OMIM/Orphanet are extracted and compiled here --
+    HPOGraph does not use or ship any UMLS/MedGen-derived mappings from
+    Mondo's full release, which carry separate, more restrictive terms.
 
 It is the responsibility of any user or redistributor of HPOGraph's compiled
 database to review and comply with the license terms of each underlying

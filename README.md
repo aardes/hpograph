@@ -149,6 +149,13 @@ release.
      (`Clingen-Gene-Disease-Summary*.csv`, `Clingen-Curation-Activity-Summary*.csv`)
      — if these files are absent, the build simply skips the two ClinGen
      tables and the app degrades gracefully (no ClinGen tab/badges shown).
+   - **Optional:** Mondo's exact-match crosswalk files, from
+     https://github.com/monarch-initiative/mondo/releases
+     (`mondo_exactmatch_omim.sssom.tsv` and the full `mondo.sssom.tsv`, which
+     the build filters down to its Orphanet subset) — used to attach ClinGen
+     data to a specific candidate disease (see
+     [ClinGen integration](#clingen-integration)); if absent, the build skips
+     `mondo_xref` and ClinGen falls back to gene-level matching only.
 2. Run the build script:
    ```bash
    python3 scripts/build_db.py --raw-dir raw_data --out data/hpo.db
@@ -168,8 +175,12 @@ database:
 - `disease`, `disease_hpo` — disease↔HPO annotations with frequency/onset/evidence (from `phenotype.hpoa`)
 - `gene`, `gene_disease` — gene↔disease associations (from `genes_to_disease.txt`, `hgnc_complete_set.tsv`)
 - `clingen_validity`, `clingen_dosage_actionability` — optional ClinGen curations
-  (see [ClinGen integration](#clingen-integration)), joined by gene symbol; absent
-  entirely if the source CSVs weren't in `raw_data/` at build time
+  (see [ClinGen integration](#clingen-integration)); absent entirely if the
+  source CSVs weren't in `raw_data/` at build time
+- `mondo_xref` — optional Mondo-to-OMIM/Orphanet exact-match crosswalk (see
+  [ClinGen integration](#clingen-integration)), used to attach ClinGen data to
+  a specific candidate disease rather than only to a gene; absent entirely if
+  the source SSSOM files weren't in `raw_data/` at build time
 - two per-term information-content style scores (see below): `gene_ic` (powers
   the disease/gene ranking) and `direct_final_score` / `spec_rank` (a standalone
   informativeness leaderboard shown in the UI).
@@ -381,11 +392,32 @@ compiles this into two additional tables, `clingen_validity` and
 are present at build time (`scripts/build_db.py`) — the app degrades
 gracefully with these tables simply absent if you rebuild without them.
 
+**Disease-level matching via Mondo's exact-match crosswalk.** ClinGen keys
+its curations by Mondo Disease Ontology ID, which has no *built-in* mapping
+to the OMIM/Orphanet IDs HPOGraph's `disease` table uses. Mondo itself
+publishes official exact-match crosswalks to both
+(`mondo_exactmatch_omim.sssom.tsv`, plus the Orphanet subset of the full
+`mondo.sssom.tsv` mapping set), which `scripts/build_db.py` compiles into a
+`mondo_xref` table. This resolves **99.5% of OMIM diseases and 99.7% of
+Orphanet diseases** in the compiled database to an exact Mondo ID, which in
+turn lets **82.6% of ClinGen's distinct Mondo IDs** be attached to one
+specific candidate disease directly — not just to a gene in general. Where
+no exact Mondo match exists for a disease (or ClinGen has no entry under
+that Mondo ID), HPOGraph falls back to a gene-level signal: the best
+classification among any gene linked to that disease. This fallback is
+less precise, since one gene is often linked to several diseases with
+different classifications, but it's still informative and better than
+nothing.
+
 **Where it shows up:**
 
+- A ClinGen classification badge on candidate **disease** rows (Diseases
+  tab) when Mondo's crosswalk resolves that exact disease to a curated
+  Mondo ID — this is evidence for *this* disease specifically.
 - A compact classification badge (e.g. "ClinGen: Definitive") next to any
-  gene in the Genes tab that has a ClinGen record, color-coded by
-  classification strength.
+  gene in the Genes tab that has a ClinGen record overall, color-coded by
+  classification strength — this one is gene-level (see fallback above),
+  since a gene row isn't tied to one disease.
 - A dedicated **ClinGen** tab listing every currently-ranked candidate gene
   that has a ClinGen curation, with an expandable detail view showing every
   curation on file for that gene (not just the best one), plus any dosage
@@ -393,20 +425,10 @@ gracefully with these tables simply absent if you rebuild without them.
   report.
 - A modest, bounded re-weighting of the internal candidate pool used by the
   Suggest tab (see above): candidate diseases get an adjustment factor of
-  `0.85 + 0.3 * clinGenWeight` (so at most a ±15% nudge) based on the best
-  ClinGen classification among the disease's linked genes, before the
-  top-15 pool for term suggestion is chosen. This never touches the
-  Diseases/Genes tab scores.
-
-**Important limitation — the join is by gene symbol only.** ClinGen keys its
-curations by MONDO disease ID, and there is no simple, reliable
-MONDO-to-OMIM/Orphanet crosswalk available to HPOGraph. Rather than build a
-fragile disease-level mapping, ClinGen data here is joined strictly through
-the shared `gene` table — so a ClinGen badge or entry tells you "this gene,
-independent of which specific candidate disease it's shown next to," not "the
-literature specifically validates this gene for this exact OMIM/Orphanet
-entry." The expandable detail view shows ClinGen's own disease label for
-each curation so you can judge the disease-level match yourself.
+  `0.85 + 0.3 * clinGenWeight` (so at most a ±15% nudge) based on the
+  disease-specific ClinGen classification when available (gene-level
+  fallback otherwise), before the top-15 pool for term suggestion is
+  chosen. This never touches the Diseases/Genes tab scores.
 
 Only a subset of genes are ClinGen-curated (roughly 3,000 of the ~45,000
 HGNC-named genes at any given ClinGen release), so the absence of a badge or
@@ -526,6 +548,10 @@ sources, each with its own terms — see [NOTICE](NOTICE) for the full text:
 - **ClinGen** (gene-disease validity, dosage sensitivity, and actionability
   curations, when present) — CC0 1.0 Public Domain Dedication, requests
   attribution where practical, see https://clinicalgenome.org/docs/terms-of-use/
+- **Mondo Disease Ontology** (exact-match crosswalk to OMIM/Orphanet, used to
+  attach ClinGen curations to a specific disease) — CC BY 4.0 (the dedicated
+  OMIM mapping file is additionally CC0), Monarch Initiative, see
+  https://github.com/monarch-initiative/mondo
 
 Review each source's terms directly before any commercial deployment or bulk
 redistribution of the compiled data — the HPOGraph license (see
@@ -555,6 +581,7 @@ metadata.
 - No clinical validation study has been performed; ranking quality has only
   been sanity-checked against a handful of textbook cases during development
   (see [How disease/gene ranking works](#how-diseasegene-ranking-works)).
-- ClinGen data is joined by gene symbol only, not disease — see
-  [ClinGen integration](#clingen-integration) for why, and read ClinGen
-  entries as gene-level context rather than disease-specific confirmation.
+- ClinGen data is matched to a specific candidate disease only where Mondo's
+  exact-match crosswalk covers it (~83% of ClinGen's Mondo IDs); the rest
+  falls back to gene-level context — see
+  [ClinGen integration](#clingen-integration) for the exact coverage figures.

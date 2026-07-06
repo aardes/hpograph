@@ -44,7 +44,7 @@ EXPECTED_TABLES = {"terms", "edges", "synonyms", "alt_ids", "disease", "disease_
 # ClinGen tables are optional/gracefully-absent by design (they're only
 # populated when raw_data/Clingen-*.csv exports were available at build
 # time), so their absence is reported but never fails the smoke check.
-OPTIONAL_TABLES = {"clingen_validity", "clingen_dosage_actionability"}
+OPTIONAL_TABLES = {"clingen_validity", "clingen_dosage_actionability", "mondo_xref"}
 
 
 def check(name, ok, detail=""):

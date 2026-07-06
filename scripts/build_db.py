@@ -55,7 +55,7 @@ PERCENT_RE = re.compile(r"^([\d.]+)\s*%$")
 # Bump this whenever the `meta` table's set of keys, or any table's columns,
 # change in a way the frontend should be able to detect/react to. Purely
 # additive data refreshes (new HPO release, same schema) do not need a bump.
-SCHEMA_VERSION = "1.2"
+SCHEMA_VERSION = "1.3"
 
 
 def parse_frequency(raw):
@@ -336,6 +336,75 @@ def load_clingen_dosage_actionability(raw_dir):
     return rows, os.path.basename(path)
 
 
+def _parse_sssom_rows(path):
+    """Yield dict rows from a Mondo SSSOM TSV mapping file. These files carry
+    a block of '#'-prefixed metadata/license lines before the real
+    tab-separated header (subject_id, subject_label, predicate_id, object_id,
+    object_label, mapping_justification) -- comment lines are stripped and
+    the remaining lines are parsed as a normal TSV with a header row.
+    """
+    with open(path, encoding="utf-8-sig") as f:
+        lines = [line for line in f if not line.startswith("#")]
+    return csv.DictReader(lines, delimiter="\t")
+
+
+def load_mondo_omim_xref(raw_dir):
+    """Parse Mondo's dedicated, official exact-match crosswalk to OMIM
+    (mondo_exactmatch_omim.sssom.tsv, CC0-licensed). Each row is a curated
+    disease-level correspondence between one Mondo ID and one specific OMIM
+    entry -- this is what lets ClinGen data (keyed by Mondo ID) be joined
+    directly to one of our candidate diseases, instead of only through a
+    shared gene (see clingen_validity below). Object IDs in this file are
+    already in "OMIM:123456" form, matching disease.id directly.
+
+    Returns (rows, source_filename) where rows are (disease_id, mondo_id)
+    tuples; ([], "") if the file isn't present -- this crosswalk is optional.
+    """
+    path = os.path.join(raw_dir, "mondo_exactmatch_omim.sssom.tsv")
+    if not os.path.isfile(path):
+        return [], ""
+    rows = []
+    for row in _parse_sssom_rows(path):
+        if row.get("predicate_id") != "skos:exactMatch":
+            continue
+        omim_id = (row.get("object_id") or "").strip()
+        mondo_id = (row.get("subject_id") or "").strip()
+        if omim_id and mondo_id:
+            rows.append((omim_id, mondo_id))
+    return rows, os.path.basename(path)
+
+
+def load_mondo_orpha_xref(raw_dir):
+    """Parse the Orphanet exact-match subset of Mondo's full mapping set
+    (mondo.sssom.tsv). Unlike the dedicated OMIM file above, this release
+    artifact bundles many source ontologies together in one file (UMLS,
+    ICD, SNOMED, Orphanet, and others) -- some of which (UMLS/MedGen) carry
+    their own separate, more restrictive redistribution terms. Only
+    skos:exactMatch rows whose object is an Orphanet ID are extracted here;
+    every other row is ignored entirely and never reaches our compiled
+    database. Object IDs are rewritten from Mondo's "Orphanet:12345" to this
+    project's "ORPHA:12345" convention to match disease.id.
+
+    Returns (rows, source_filename); rows are (disease_id, mondo_id) tuples;
+    ([], "") if the file isn't present -- this crosswalk is optional.
+    """
+    path = os.path.join(raw_dir, "mondo.sssom.tsv")
+    if not os.path.isfile(path):
+        return [], ""
+    rows = []
+    for row in _parse_sssom_rows(path):
+        if row.get("predicate_id") != "skos:exactMatch":
+            continue
+        object_id = (row.get("object_id") or "").strip()
+        if not object_id.startswith("Orphanet:"):
+            continue
+        orpha_id = "ORPHA:" + object_id.split(":", 1)[1]
+        mondo_id = (row.get("subject_id") or "").strip()
+        if mondo_id:
+            rows.append((orpha_id, mondo_id))
+    return rows, os.path.basename(path)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--raw-dir", required=True)
@@ -368,6 +437,18 @@ def main():
     print("Loading ClinGen dosage/actionability (optional)...")
     clingen_dosage, clingen_dosage_source = load_clingen_dosage_actionability(args.raw_dir)
     print(f"  {len(clingen_dosage)} rows" + (f" from {clingen_dosage_source}" if clingen_dosage_source else " (file not found -- skipped)"))
+
+    print("Loading Mondo-OMIM exact-match crosswalk (optional)...")
+    mondo_omim_xref, mondo_omim_xref_source = load_mondo_omim_xref(args.raw_dir)
+    print(f"  {len(mondo_omim_xref)} rows" + (f" from {mondo_omim_xref_source}" if mondo_omim_xref_source else " (file not found -- skipped)"))
+
+    print("Loading Mondo-Orphanet exact-match crosswalk (optional)...")
+    mondo_orpha_xref, mondo_orpha_xref_source = load_mondo_orpha_xref(args.raw_dir)
+    print(f"  {len(mondo_orpha_xref)} rows" + (f" from {mondo_orpha_xref_source}" if mondo_orpha_xref_source else " (file not found -- skipped)"))
+    mondo_xref = (
+        [(did, mid, "omim_exact") for did, mid in mondo_omim_xref]
+        + [(did, mid, "orpha_exact") for did, mid in mondo_orpha_xref]
+    )
 
     print("Computing ancestor closures for IC...")
     direct_parents = build_ancestor_map(edges)
@@ -585,11 +666,14 @@ def main():
         association_type TEXT,
         ncbi_gene_id TEXT
     );
-    -- ClinGen data below is joined/surfaced by GENE SYMBOL only. ClinGen
-    -- keys its curations by MONDO disease ID, which has no simple direct
-    -- mapping to the OMIM/Orphanet IDs disease.id uses here, so we do not
-    -- attempt to attach a ClinGen row to one specific disease candidate --
-    -- disease_label/mondo_id are kept only for display/reference.
+    -- ClinGen data is keyed by MONDO disease ID, which has no built-in
+    -- mapping to the OMIM/Orphanet IDs disease.id uses here. mondo_xref
+    -- below (from Mondo's own official exact-match crosswalks) supplies that
+    -- mapping for ~99% of our OMIM/Orphanet diseases, letting most ClinGen
+    -- rows be joined to one specific candidate disease directly. Where no
+    -- exact Mondo match exists for a disease, the app falls back to
+    -- attaching ClinGen info via a shared gene instead (less precise, since
+    -- one gene can be linked to several diseases) -- see ranking.js.
     CREATE TABLE clingen_validity (
         gene_symbol TEXT,
         hgnc_id TEXT,
@@ -612,6 +696,17 @@ def main():
         actionability_classification TEXT,
         actionability_report_url TEXT,
         actionability_group TEXT
+    );
+    -- Mondo's official exact-match crosswalk: one row per (disease_id,
+    -- mondo_id) correspondence, sourced from Mondo's own dedicated OMIM
+    -- mapping release plus the Orphanet subset of its full mapping set
+    -- (see load_mondo_omim_xref / load_mondo_orpha_xref above). `source`
+    -- records which of the two crosswalk files a row came from, for
+    -- provenance/debugging only.
+    CREATE TABLE mondo_xref (
+        disease_id TEXT,
+        mondo_id TEXT,
+        source TEXT
     );
     """)
 
@@ -643,6 +738,7 @@ def main():
     cur.executemany("INSERT INTO gene_disease VALUES (?,?,?,?)", gene_disease)
     cur.executemany("INSERT INTO clingen_validity VALUES (?,?,?,?,?,?,?,?,?)", clingen_validity)
     cur.executemany("INSERT INTO clingen_dosage_actionability VALUES (?,?,?,?,?,?,?,?,?,?)", clingen_dosage)
+    cur.executemany("INSERT INTO mondo_xref VALUES (?,?,?)", mondo_xref)
 
     cur.executescript("""
     CREATE INDEX idx_terms_name_lc ON terms(name_lc);
@@ -658,6 +754,9 @@ def main():
     CREATE INDEX idx_gene_symbol ON gene(symbol);
     CREATE INDEX idx_clingen_validity_gene ON clingen_validity(gene_symbol);
     CREATE INDEX idx_clingen_dosage_gene ON clingen_dosage_actionability(gene_symbol);
+    CREATE INDEX idx_clingen_validity_mondo ON clingen_validity(mondo_id);
+    CREATE INDEX idx_mondo_xref_disease ON mondo_xref(disease_id);
+    CREATE INDEX idx_mondo_xref_mondo ON mondo_xref(mondo_id);
     """)
 
     import datetime
@@ -674,6 +773,9 @@ def main():
         ("clingen_validity_source", clingen_validity_source or "not included in this build"),
         ("clingen_dosage_actionability_source", clingen_dosage_source or "not included in this build"),
         ("num_clingen_validity_rows", str(len(clingen_validity))),
+        ("mondo_omim_xref_source", mondo_omim_xref_source or "not included in this build"),
+        ("mondo_orpha_xref_source", mondo_orpha_xref_source or "not included in this build"),
+        ("num_mondo_xref_rows", str(len(mondo_xref))),
     ])
 
     conn.commit()

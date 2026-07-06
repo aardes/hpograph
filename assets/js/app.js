@@ -933,11 +933,33 @@ const HPOApp = (() => {
           <span class="hg-rank-score">${pct}%</span>
           <span class="hg-id">${diseaseId}</span>
           <span class="hg-term-name">${escapeHtml(name)}</span>
+          ${clinGenDiseaseBadgeHtml(diseaseId)}
           <span class="hg-rank-meta">${nTerms} annotated terms · click to see why</span>
         </div>
         ${expanded ? `<div class="hg-explain-box" data-detail-disease="${cssId(diseaseId)}"></div>` : ""}
       </div>
     `;
+  }
+
+  // Disease-specific ClinGen badge -- distinct from clinGenBadgeHtml() on
+  // gene rows, which reflects a gene's best classification across ALL its
+  // linked diseases. This one only shows when Mondo's exact-match crosswalk
+  // resolves this exact candidate disease to a Mondo ID that ClinGen has
+  // curated directly (see Ranking.clinGenForDisease) -- i.e. it's evidence
+  // for this disease specifically, not inferred via a shared gene.
+  function clinGenDiseaseBadgeHtml(diseaseId) {
+    try {
+      if (!Ranking.clinGenForDisease) return "";
+      const info = Ranking.clinGenForDisease(diseaseId);
+      if (!info || !info.best) return "";
+      const color = CLINGEN_BADGE_COLORS[info.best.classification] || "#6b7280";
+      return `<span class="hg-clingen-badge" style="color:${color}; border-color:${color}" title="ClinGen (this disease, via ${escapeHtml(
+        info.best.gene_symbol || ""
+      )}): ${escapeHtml(info.best.classification)}">ClinGen: ${escapeHtml(info.best.classification)}</span>`;
+    } catch (e) {
+      console.warn(`ClinGen disease badge failed for ${diseaseId}:`, e);
+      return "";
+    }
   }
 
   function renderGeneList() {
@@ -1059,20 +1081,12 @@ const HPOApp = (() => {
 
     if (el.tabClinGen) el.tabClinGen.textContent = `ClinGen (${withClinGen.length})`;
 
-    const summary = `
-      <div class="hg-rank-status">
-        ${withClinGen.length} of ${scores.length} candidate genes have a ClinGen curation on record.
-        The rest simply haven't been ClinGen-curated yet -- ClinGen covers roughly 3,000 of the ~45,000
-        HGNC-named genes, so an absence here is not itself negative evidence.
-      </div>
-    `;
-
     if (!withClinGen.length) {
-      el.clingenList.innerHTML = summary + '<div class="hg-empty">None of the current candidate genes have a ClinGen curation.</div>';
+      el.clingenList.innerHTML = '<div class="hg-empty">None of the current candidate genes have a ClinGen curation.</div>';
       return;
     }
 
-    el.clingenList.innerHTML = summary + withClinGen.map(({ gene, clinGen }) => clinGenRowHtml(gene, clinGen)).join("");
+    el.clingenList.innerHTML = withClinGen.map(({ gene, clinGen }) => clinGenRowHtml(gene, clinGen)).join("");
 
     el.clingenList.querySelectorAll("[data-toggle-clingen]").forEach((elm) => {
       elm.addEventListener("click", () => {

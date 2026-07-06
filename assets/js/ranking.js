@@ -323,12 +323,16 @@ const Ranking = (() => {
   // expert-panel-curated confidence signal (Definitive / Strong / Moderate /
   // Limited / Disputed / Refuted / No Known Disease Relationship) -- a
   // genuinely different kind of evidence from the phenotype-similarity
-  // ranking above. It is joined here by GENE SYMBOL ONLY: ClinGen keys its
-  // curations by MONDO disease ID, which has no simple, reliable mapping to
-  // the OMIM/Orphanet IDs our `disease` table uses, so we deliberately do
-  // NOT attempt to attach a ClinGen row to one specific candidate disease --
-  // only to a gene, independent of which of that gene's diseases is the
-  // current candidate. See README for more on this limitation.
+  // ranking above. ClinGen keys its curations by MONDO disease ID, which has
+  // no built-in mapping to the OMIM/Orphanet IDs our `disease` table uses.
+  // `mondo_xref` (from Mondo's own official exact-match crosswalk releases)
+  // supplies that mapping directly for ~99% of our OMIM/Orphanet diseases,
+  // so most ClinGen rows CAN now be attached to one specific candidate
+  // disease (see clinGenForDisease below) rather than only to a gene overall
+  // (clinGenForGene). Where no exact Mondo match exists for a disease (or
+  // ClinGen has no entry under that Mondo ID), we fall back to the
+  // gene-level signal -- less precise, since one gene can be linked to
+  // several diseases, but still informative. See README for more detail.
   const CLINGEN_WEIGHT = {
     Definitive: 1.0,
     Strong: 0.85,
@@ -390,14 +394,89 @@ const Ranking = (() => {
     }
   }
 
-  // Best ClinGen weight among the gene(s) linked to a candidate disease (via
-  // gene_disease -- unrelated to ClinGen's own MONDO ids). Returns 0.5
-  // ("neutral") when the disease has no linked genes, or when none of its
-  // linked genes have any ClinGen record at all -- absence of a ClinGen
-  // curation is common (only ~3,000 of ~45,000 HGNC genes are covered) and
+  let mondoXrefTableAvailable = null;
+  function hasMondoXrefTable() {
+    if (mondoXrefTableAvailable !== null) return mondoXrefTableAvailable;
+    try {
+      const rows = HPODB.all("SELECT name FROM sqlite_master WHERE type='table' AND name='mondo_xref'");
+      mondoXrefTableAvailable = rows.length === 1;
+    } catch (e) {
+      console.warn("Could not check for mondo_xref table:", e);
+      mondoXrefTableAvailable = false;
+    }
+    return mondoXrefTableAvailable;
+  }
+
+  const mondoIdCache = new Map();
+  // A disease can (rarely) have more than one exact Mondo match; all are
+  // returned so clinGenForDisease can check ClinGen records under any of
+  // them, but this is uncommon -- Mondo's exact-match crosswalk is designed
+  // to be close to 1:1.
+  function diseaseMondoIds(diseaseId) {
+    if (!hasMondoXrefTable()) return [];
+    if (mondoIdCache.has(diseaseId)) return mondoIdCache.get(diseaseId);
+    try {
+      const rows = HPODB.all("SELECT mondo_id FROM mondo_xref WHERE disease_id=?", [diseaseId]);
+      const ids = rows.map((r) => r.mondo_id);
+      mondoIdCache.set(diseaseId, ids);
+      return ids;
+    } catch (e) {
+      console.warn(`mondo_xref lookup failed for ${diseaseId}:`, e);
+      return [];
+    }
+  }
+
+  const clinGenByDiseaseCache = new Map();
+  // Disease-specific ClinGen lookup: resolves diseaseId -> Mondo ID(s) via
+  // mondo_xref, then reads clingen_validity directly by mondo_id -- this is
+  // ClinGen data for THIS exact candidate disease, not "some disease linked
+  // to one of its genes". Returns EMPTY_CLINGEN_RESULT (no dosage data here,
+  // that's still gene-keyed only) if there's no exact Mondo match for this
+  // disease, or ClinGen has no record under that Mondo ID.
+  function clinGenForDisease(diseaseId) {
+    if (!hasClinGenTables() || !hasMondoXrefTable()) return EMPTY_CLINGEN_RESULT;
+    if (clinGenByDiseaseCache.has(diseaseId)) return clinGenByDiseaseCache.get(diseaseId);
+    try {
+      const mondoIds = diseaseMondoIds(diseaseId);
+      if (!mondoIds.length) {
+        clinGenByDiseaseCache.set(diseaseId, EMPTY_CLINGEN_RESULT);
+        return EMPTY_CLINGEN_RESULT;
+      }
+      const placeholders = mondoIds.map(() => "?").join(",");
+      const entries = HPODB.all(
+        `SELECT gene_symbol, disease_label, mondo_id, moi, classification, classification_date, gcep, report_url
+         FROM clingen_validity WHERE mondo_id IN (${placeholders})`,
+        mondoIds
+      );
+      let best = null;
+      for (const e of entries) {
+        const w = CLINGEN_WEIGHT[e.classification] ?? 0;
+        if (!best || w > best.weight) best = { ...e, weight: w };
+      }
+      const result = { entries, best, dosageActionability: [] };
+      clinGenByDiseaseCache.set(diseaseId, result);
+      return result;
+    } catch (e) {
+      console.warn(`Disease-level ClinGen lookup failed for ${diseaseId}:`, e);
+      return EMPTY_CLINGEN_RESULT;
+    }
+  }
+
+  // ClinGen weight for a candidate disease, most precise source first:
+  //   1. Disease-specific match via Mondo's exact-match crosswalk -- this
+  //      IS the classification for this exact disease, not an inference.
+  //   2. Fallback: best ClinGen weight among the gene(s) linked to this
+  //      disease (via gene_disease) -- less precise, since one gene can be
+  //      linked to several diseases, but still informative when no exact
+  //      Mondo match is available.
+  // Returns 0.5 ("neutral") when neither source has any information --
+  // absence of a ClinGen curation is common (only ~3,000 of ~45,000 HGNC
+  // genes are covered, and not every disease has an exact Mondo match) and
   // should not be read as negative evidence.
   function diseaseClinGenWeight(diseaseId) {
     if (!hasClinGenTables()) return 0.5;
+    const direct = clinGenForDisease(diseaseId);
+    if (direct.best) return direct.best.weight;
     try {
       const genes = HPODB.all("SELECT DISTINCT gene_symbol FROM gene_disease WHERE disease_id=?", [diseaseId]);
       if (!genes.length) return 0.5;
@@ -518,6 +597,7 @@ const Ranking = (() => {
     categoriesFor,
     suggestTerms,
     clinGenForGene,
+    clinGenForDisease,
     ancestors,
     ic,
   };
