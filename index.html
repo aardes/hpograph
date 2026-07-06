@@ -232,21 +232,64 @@
     </details>
 
     <details>
+      <summary>What does the "Suggest" tab do?</summary>
+      <div class="hg-docs-content">
+        <p>
+          The Suggest tab proposes additional HPO terms you haven't selected yet, based on the phenotype
+          overlap of your current top candidate diseases — it never uses gene/variant databases, and
+          nothing leaves the browser. "Common to leaders" surfaces findings shared by almost all of your
+          leading candidates, useful for confirming a working hypothesis. "Narrow it down" surfaces
+          findings present in roughly half your leading candidates, which would meaningfully split the
+          field if present or absent — useful for actively differentiating between top candidates. Each
+          suggestion has a one-click "+ Add" button. These are suggestions to consider, not findings to
+          accept uncritically — always confirm against the patient/record before adding a term you didn't
+          directly observe.
+        </p>
+      </div>
+    </details>
+
+    <details>
+      <summary>What is ClinGen, and how is it used here?</summary>
+      <div class="hg-docs-content">
+        <p>
+          <a href="https://clinicalgenome.org" target="_blank" rel="noopener">ClinGen</a> (Clinical Genome
+          Resource) publishes independent, expert-panel-curated gene-disease validity classifications
+          (Definitive/Strong/Moderate/Limited/Disputed/Refuted) — a genuinely different kind of evidence
+          from the phenotype-similarity ranking above, reflecting overall confidence in a gene-disease
+          relationship rather than a score for your specific patient.
+        </p>
+        <p>
+          Where possible, ClinGen data is matched to one specific candidate disease using the Mondo Disease
+          Ontology's official exact-match crosswalk to OMIM/Orphanet — this covers the large majority of
+          candidate diseases. Where no exact match exists, HPOGraph falls back to a gene-level signal: the
+          best classification among any gene linked to that disease (less precise, since one gene can be
+          linked to several diseases). You'll see this as a badge directly on disease/gene rows, a dedicated
+          ClinGen tab with full curation detail, and — for stronger classifications only — a tag on the "Top
+          matches so far" summary cards. ClinGen data is optional and only covers a subset of genes/diseases;
+          its absence for a given row is not itself negative evidence.
+        </p>
+      </div>
+    </details>
+
+    <details>
       <summary>Where does the data come from, and what are the limitations?</summary>
       <div class="hg-docs-content">
         <p>
           The ontology graph, disease annotations (with frequency/onset/evidence), and gene-disease
           associations come from the HPO Consortium's official releases (hpo.jax.org), cross-referenced
-          with HGNC gene metadata. Everything is compiled offline into one SQLite file that ships with the
-          app and runs entirely in your browser — no data you search or select ever leaves your device.
+          with HGNC gene metadata. Gene-disease validity curations (optional) come from ClinGen, matched to
+          specific diseases using the Mondo Disease Ontology's exact-match crosswalk (optional). Everything
+          is compiled offline into one SQLite file that ships with the app and runs entirely in your browser
+          — no data you search or select ever leaves your device.
         </p>
         <p>
           Known limitations: candidate disease matching pre-filters using ancestor and descendant overlap,
           so a disease whose closest relation to a selected term is a "cousin" term reached only sideways
           through a different branch could occasionally be missed — this is rare in practice for clinically
-          specific term selections. There's no per-term severity/onset input yet. Your selected phenotype
-          set lives in this browser tab, but can be shared via the page's URL or exported as JSON/PDF
-          (see the Selected tab).
+          specific term selections. There's no per-term severity/onset input yet. ClinGen data doesn't cover
+          every gene or disease, and gene-level fallback matching (see above) is less precise than a direct
+          disease match. Your selected phenotype set lives in this browser tab, but can be shared via the
+          page's URL or exported as JSON/PDF (see the Selected tab).
         </p>
       </div>
     </details>
