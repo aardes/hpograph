@@ -536,6 +536,7 @@ body {
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+.hg-top-card-clingen { display: inline-block; margin-top: 6px; }
 
 /* ---------- Suggest tab ---------- */
 

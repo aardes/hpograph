@@ -744,6 +744,7 @@ const HPOApp = (() => {
           <div class="hg-top-card-score" style="color:${scoreColor(pct)}">${pct}%</div>
           <div class="hg-id">${s.diseaseId}</div>
           <div class="hg-top-card-name">${escapeHtml(diseaseName(s.diseaseId))}</div>
+          ${clinGenSummaryTagHtml(Ranking.clinGenForDisease ? Ranking.clinGenForDisease(s.diseaseId) : null)}
         </div>
       `);
     }
@@ -755,6 +756,7 @@ const HPOApp = (() => {
           <div class="hg-top-card-score" style="color:${scoreColor(pct)}">${pct}%</div>
           <div class="hg-id">${escapeHtml(topGene.symbol)}</div>
           <div class="hg-top-card-name">${topGene.nMatchedDiseases} linked disease${topGene.nMatchedDiseases === 1 ? "" : "s"}</div>
+          ${clinGenSummaryTagHtml(Ranking.clinGenForGene ? Ranking.clinGenForGene(topGene.symbol) : null)}
         </div>
       `);
     }
@@ -958,6 +960,29 @@ const HPOApp = (() => {
       )}): ${escapeHtml(info.best.classification)}">ClinGen: ${escapeHtml(info.best.classification)}</span>`;
     } catch (e) {
       console.warn(`ClinGen disease badge failed for ${diseaseId}:`, e);
+      return "";
+    }
+  }
+
+  // Only surface a ClinGen tag on the "Top matches so far" summary cards for
+  // stronger classifications (Definitive/Strong/Moderate) -- Limited,
+  // Disputed, Refuted, and "No Known Disease Relationship" are meaningful in
+  // the Diseases/Genes/ClinGen tabs but too weak a signal to earn space on
+  // this compact, at-a-glance summary. Accepts an already-fetched
+  // clinGenForDisease()/clinGenForGene() result (or null/undefined) so
+  // callers don't need their own try/catch.
+  const CLINGEN_SUMMARY_TIERS = new Set(["Definitive", "Strong", "Moderate"]);
+  function clinGenSummaryTagHtml(info) {
+    try {
+      if (!info || !info.best) return "";
+      const classification = info.best.classification;
+      if (!CLINGEN_SUMMARY_TIERS.has(classification)) return "";
+      const color = CLINGEN_BADGE_COLORS[classification] || "#6b7280";
+      return `<span class="hg-clingen-badge hg-top-card-clingen" style="color:${color}; border-color:${color}">ClinGen: ${escapeHtml(
+        classification
+      )}</span>`;
+    } catch (e) {
+      console.warn("ClinGen summary tag failed:", e);
       return "";
     }
   }
