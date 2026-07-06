@@ -142,6 +142,10 @@ month, so as a maintenance cadence this project aims to refresh all source
 data about **once a month** — there's no automation that does this on a
 schedule (Cloudflare only serves whatever `data/hpo.db.gz` is currently
 committed), so it's a manual "run the update script, review, push" step.
+See [`MAINTENANCE.md`](MAINTENANCE.md) for the full step-by-step checklist
+(download, sanity-check, doc cross-check, commit, verify live) to run each
+time; [`docs/verification-reports/`](docs/verification-reports/) holds
+dated snapshots from full verification passes.
 
 ### Option A: automated (`scripts/update_data.py`)
 

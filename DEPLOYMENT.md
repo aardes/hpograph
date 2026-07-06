@@ -89,6 +89,14 @@ The first should return `200` with `content-type: text/html`; the second
 bar completes, searching a term (e.g. "Arachnodactyly") shows results, and
 selecting a couple of terms produces a ranked disease/gene list.
 
+**Edge caching after a push:** the very first fetch of `/` right after a
+push can occasionally return a stale, previously-cached copy of `index.html`
+for a short window before Cloudflare's edge cache picks up the new
+deployment. If a just-pushed UI change (e.g. a new tab) doesn't show up
+immediately, append a throwaway query string (`?v=2`) or hard-refresh before
+concluding the deploy failed — a cache-busted fetch reliably shows the new
+content even when the bare URL momentarily doesn't.
+
 ## Analytics
 
 Cloudflare Web Analytics is enabled manually (the `workers.dev` subdomain
