@@ -55,7 +55,6 @@ diagnostic accuracy.
 - [ClinGen integration](#clingen-integration)
 - [Sharing and exporting a phenotype set](#sharing-and-exporting-a-phenotype-set)
 - [Project layout](#project-layout)
-- [Deploying](#deploying-cloudflare-workers)
 - [Running with Docker](#running-with-docker)
 - [Versioning / data provenance](#versioning--data-provenance)
 - [Data verification history](#data-verification-history)
@@ -548,23 +547,6 @@ CITATION.cff             citation metadata
 DEPLOYMENT.md            Cloudflare Workers + Docker Hub deployment notes/troubleshooting
 docs/verification-reports/  monthly data-verification snapshots + growth-history page
 ```
-
-## Deploying (Cloudflare Workers)
-
-Repo: https://github.com/aardes/hpograph — deployed at
-https://hpograph.amin-davani.workers.dev
-
-This is a static site (no server logic), deployed to Cloudflare Workers'
-static-assets hosting via `wrangler.jsonc` (`assets.directory: "."`) rather
-than classic Cloudflare Pages, since new git-connected Cloudflare projects
-now default to the Workers deployment path. See
-[DEPLOYMENT.md](DEPLOYMENT.md) for the full step-by-step setup, including
-enabling the public `workers.dev` URL and troubleshooting a build that
-completes but shows "No URLs enabled".
-
-Every push to the connected branch (`main`) redeploys automatically. If you
-rebuild the database locally, just commit the new `data/hpo.db.gz` — no
-other steps required.
 
 ## Running with Docker
 
