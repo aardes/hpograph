@@ -8,13 +8,25 @@ and genes for differential-diagnosis and gene-prioritization support.
 **Live demo:** https://hpograph.amin-davani.workers.dev
 **Repository:** https://github.com/aardes/hpograph
 
-## Usage and License
+## License and Usage
 
-HPOGraph is **free for research, academic, educational, and other
-non-commercial use**. Companies and commercial users must contact the author
-before using it commercially — see [LICENSE](LICENSE) and [NOTICE](NOTICE)
-for the full terms, and the [Citation](#citation) section below if you use
-it in published work.
+HPOGraph is free for research, academic, educational, and non-commercial use.
+
+Commercial use, company use, commercial laboratory use, paid clinical
+service use, product integration, hosted commercial deployment, or use as
+part of a commercial software/service requires prior written permission
+from the author.
+
+Please see the `LICENSE` and `NOTICE` files for details.
+
+HPOGraph may use or display data derived from third-party biomedical
+resources, including HPO, OMIM-linked annotations, HGNC, and related
+resources. These resources may have their own licenses and terms of use.
+Users are responsible for ensuring compliance with all applicable
+third-party terms.
+
+HPOGraph is intended for research, education, and phenotype exploration. It
+is not a standalone diagnostic tool.
 
 Author: Amin Ardeshirdavani — https://github.com/aardes
 
@@ -30,7 +42,7 @@ diagnostic accuracy.
 
 ## Contents
 
-- [Usage and License](#usage-and-license)
+- [License and Usage](#license-and-usage)
 - [Clinical Disclaimer](#clinical-disclaimer)
 - [Why a graph, not a tree](#why-a-graph-not-a-tree)
 - [Running it locally](#running-it-locally)
@@ -39,6 +51,8 @@ diagnostic accuracy.
 - [How disease/gene ranking works](#how-diseasegene-ranking-works)
 - [Standalone term informativeness score](#standalone-term-informativeness-score)
 - [Phenotype-set relationships (the distance calculator)](#phenotype-set-relationships-the-distance-calculator)
+- [Suggested phenotype terms](#suggested-phenotype-terms)
+- [ClinGen integration](#clingen-integration)
 - [Sharing and exporting a phenotype set](#sharing-and-exporting-a-phenotype-set)
 - [Project layout](#project-layout)
 - [Deploying](#deploying-cloudflare-workers)
@@ -130,6 +144,11 @@ release.
      — need `hp.json`, `phenotype.hpoa`, `genes_to_disease.txt`
    - HGNC gene metadata: https://www.genenames.org/download/statistics-and-files/
      — need `hgnc_complete_set_*.tsv`
+   - **Optional:** ClinGen gene-disease validity and dosage/actionability
+     summary reports from https://search.clinicalgenome.org/kb/downloads
+     (`Clingen-Gene-Disease-Summary*.csv`, `Clingen-Curation-Activity-Summary*.csv`)
+     — if these files are absent, the build simply skips the two ClinGen
+     tables and the app degrades gracefully (no ClinGen tab/badges shown).
 2. Run the build script:
    ```bash
    python3 scripts/build_db.py --raw-dir raw_data --out data/hpo.db
@@ -148,6 +167,9 @@ database:
 - `terms`, `edges`, `synonyms`, `alt_ids` — the HPO ontology graph (from `hp.json`)
 - `disease`, `disease_hpo` — disease↔HPO annotations with frequency/onset/evidence (from `phenotype.hpoa`)
 - `gene`, `gene_disease` — gene↔disease associations (from `genes_to_disease.txt`, `hgnc_complete_set.tsv`)
+- `clingen_validity`, `clingen_dosage_actionability` — optional ClinGen curations
+  (see [ClinGen integration](#clingen-integration)), joined by gene symbol; absent
+  entirely if the source CSVs weren't in `raw_data/` at build time
 - two per-term information-content style scores (see below): `gene_ic` (powers
   the disease/gene ranking) and `direct_final_score` / `spec_rank` (a standalone
   informativeness leaderboard shown in the UI).
@@ -313,6 +335,84 @@ ancestor is the ontology root), correctly reflecting that these are
 phenotypically unrelated findings whose only connection would have to come
 from a specific multi-system disease, not from being "close" in the ontology.
 
+## Suggested phenotype terms
+
+The **Suggest** tab (`Ranking.suggestTerms()` in `assets/js/ranking.js`)
+proposes additional HPO terms you haven't selected yet, based purely on the
+phenotype overlap of your current top candidate diseases — never on
+gene/variant databases, and nothing leaves the browser. For each unselected
+term appearing across the top 15 candidate diseases (by weighted score),
+it computes a coverage fraction `p(t)` = the fraction of that weighted
+candidate pool annotated with the term, then offers two ranked lists:
+
+- **"Common to leaders"** (reinforcing) — terms with high `p(t)`, i.e. shared
+  by almost all of your leading candidates. Useful for confirming a working
+  hypothesis: if the patient also has this finding, it strengthens the whole
+  leading group at once.
+- **"Narrow it down"** (discriminative) — terms scored by
+  `4 * p(t) * (1 - p(t)) * IC(t)`, which peaks when a term is present in
+  roughly half the leading candidates (i.e. it would split the field) and is
+  weighted by the term's own specificity so generic terms don't dominate.
+  Useful for actively differentiating between your top candidates.
+
+Terms seen in only one candidate disease are excluded (`SUGGEST_MIN_DISEASE_COUNT
+= 2`) to avoid single-disease noise, and each list is capped at 8 results.
+Each suggested term has a one-click "+ Add" action that adds it to your
+selection and re-ranks immediately. As with everything else in the app, these
+are suggestions to consider, not findings to accept uncritically — always
+confirm against the patient/record before adding a term you didn't directly
+observe.
+
+If ClinGen data is present in the compiled database (see next section), the
+15-disease pool used for suggestions is chosen using a small ClinGen-informed
+adjustment on top of the raw phenotype-similarity score — described below.
+This adjustment is confined to the Suggest tab's internal candidate pool; it
+never changes the Diseases/Genes tab rankings themselves.
+
+## ClinGen integration
+
+[ClinGen](https://clinicalgenome.org) (Clinical Genome Resource) publishes
+expert-panel-curated **gene-disease validity classifications**
+(Definitive/Strong/Moderate/Limited/Disputed/Refuted/No Known Disease
+Relationship) plus gene **dosage sensitivity** (haploinsufficiency/
+triplosensitivity) and **clinical actionability** assessments. HPOGraph
+compiles this into two additional tables, `clingen_validity` and
+`clingen_dosage_actionability`, when the corresponding ClinGen CSV exports
+are present at build time (`scripts/build_db.py`) — the app degrades
+gracefully with these tables simply absent if you rebuild without them.
+
+**Where it shows up:**
+
+- A compact classification badge (e.g. "ClinGen: Definitive") next to any
+  gene in the Genes tab that has a ClinGen record, color-coded by
+  classification strength.
+- A dedicated **ClinGen** tab listing every currently-ranked candidate gene
+  that has a ClinGen curation, with an expandable detail view showing every
+  curation on file for that gene (not just the best one), plus any dosage
+  sensitivity/actionability information and a link to the source ClinGen
+  report.
+- A modest, bounded re-weighting of the internal candidate pool used by the
+  Suggest tab (see above): candidate diseases get an adjustment factor of
+  `0.85 + 0.3 * clinGenWeight` (so at most a ±15% nudge) based on the best
+  ClinGen classification among the disease's linked genes, before the
+  top-15 pool for term suggestion is chosen. This never touches the
+  Diseases/Genes tab scores.
+
+**Important limitation — the join is by gene symbol only.** ClinGen keys its
+curations by MONDO disease ID, and there is no simple, reliable
+MONDO-to-OMIM/Orphanet crosswalk available to HPOGraph. Rather than build a
+fragile disease-level mapping, ClinGen data here is joined strictly through
+the shared `gene` table — so a ClinGen badge or entry tells you "this gene,
+independent of which specific candidate disease it's shown next to," not "the
+literature specifically validates this gene for this exact OMIM/Orphanet
+entry." The expandable detail view shows ClinGen's own disease label for
+each curation so you can judge the disease-level match yourself.
+
+Only a subset of genes are ClinGen-curated (roughly 3,000 of the ~45,000
+HGNC-named genes at any given ClinGen release), so the absence of a badge or
+ClinGen-tab entry for a gene is not itself negative evidence — it usually
+just means that gene hasn't been through ClinGen's curation process yet.
+
 ## Sharing and exporting a phenotype set
 
 A selected phenotype set can be shared or saved outside the app in a few
@@ -324,15 +424,16 @@ ways (`assets/js/app.js`):
   Opening a link like this preselects those terms on load (invalid/unknown
   IDs are silently skipped) and re-runs ranking automatically. A "Copy link"
   action copies the current URL to the clipboard.
-- **Export as JSON/CSV.** The selected-terms panel can export the current
-  phenotype set as a small JSON or CSV file (ID + name per term) for
-  record-keeping or for pasting into another tool.
+- **Export as JSON.** The selected-terms panel can export a single JSON file
+  containing the selected terms *and* the full current disease/gene ranking
+  (ID, name, source, score, matched-term/association details) for
+  record-keeping or for feeding into another tool.
 - **PDF report.** A one-page PDF summarizing the selection, phenotype-set
-  relationships, and top candidate diseases/genes (see the "Download PDF
-  report" button in the Selected tab).
+  relationships, and top candidate diseases/genes (see the "PDF report"
+  button in the Selected tab).
 
 None of this involves a server: the shareable URL only encodes HPO IDs (no
-patient data), and JSON/CSV/PDF export happens entirely in the browser.
+patient data), and JSON/PDF export happens entirely in the browser.
 
 ## Project layout
 
@@ -422,10 +523,13 @@ sources, each with its own terms — see [NOTICE](NOTICE) for the full text:
 - **Orphanet** (ORPHA disease identifiers/names) — see
   https://www.orphadata.com/
 - **HGNC** (approved gene symbols/metadata) — see https://www.genenames.org
+- **ClinGen** (gene-disease validity, dosage sensitivity, and actionability
+  curations, when present) — CC0 1.0 Public Domain Dedication, requests
+  attribution where practical, see https://clinicalgenome.org/docs/terms-of-use/
 
 Review each source's terms directly before any commercial deployment or bulk
 redistribution of the compiled data — the HPOGraph license (see
-[Usage and License](#usage-and-license)) covers this repository's code only,
+[License and Usage](#license-and-usage)) covers this repository's code only,
 not the third-party data it compiles.
 
 ## Citation
@@ -451,10 +555,6 @@ metadata.
 - No clinical validation study has been performed; ranking quality has only
   been sanity-checked against a handful of textbook cases during development
   (see [How disease/gene ranking works](#how-diseasegene-ranking-works)).
-
-## Suggested repository topics
-
-For discoverability on GitHub, consider adding these topics under
-**Settings → General → Topics** (not set automatically by anything in this
-repo): `hpo`, `human-phenotype-ontology`, `phenotype`, `rare-disease`,
-`clinical-genomics`, `bioinformatics`, `sqlite-wasm`.
+- ClinGen data is joined by gene symbol only, not disease — see
+  [ClinGen integration](#clingen-integration) for why, and read ClinGen
+  entries as gene-level context rather than disease-specific confirmation.

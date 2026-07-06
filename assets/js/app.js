@@ -23,6 +23,9 @@ const HPOApp = (() => {
     lastGeneScores: [],
     expandedDiseaseIds: new Set(),
     expandedGeneSymbols: new Set(),
+    expandedClinGenSymbols: new Set(),
+    activeSuggestMode: "discriminative",
+    lastSuggestions: { reinforcing: [], discriminative: [] },
   };
 
   const el = {
@@ -35,23 +38,30 @@ const HPOApp = (() => {
     addFocusBtn: document.getElementById("add-focus-btn"),
     selectedList: document.getElementById("selected-list"),
     relationshipsPanel: document.getElementById("relationships-panel"),
+    topSummary: document.getElementById("top-summary"),
+    suggestList: document.getElementById("suggest-list"),
+    suggestModeBtns: document.querySelectorAll("[data-suggest-mode]"),
     exportActions: document.getElementById("export-actions"),
     exportBtn: document.getElementById("export-btn"),
     copyLinkBtn: document.getElementById("copy-link-btn"),
     exportJsonBtn: document.getElementById("export-json-btn"),
-    exportCsvBtn: document.getElementById("export-csv-btn"),
     exampleChips: document.querySelectorAll(".hg-example-chip"),
     tabSelected: document.getElementById("tab-selected"),
     tabDisease: document.getElementById("tab-disease"),
     tabGene: document.getElementById("tab-gene"),
+    tabClinGen: document.getElementById("tab-clingen"),
+    tabSuggest: document.getElementById("tab-suggest"),
     tabs: document.querySelectorAll(".hg-tab-btn"),
     panels: {
       selected: document.getElementById("panel-selected"),
       disease: document.getElementById("panel-disease"),
       gene: document.getElementById("panel-gene"),
+      clingen: document.getElementById("panel-clingen"),
+      suggest: document.getElementById("panel-suggest"),
     },
     diseaseList: document.getElementById("disease-list"),
     geneList: document.getElementById("gene-list"),
+    clingenList: document.getElementById("clingen-list"),
     rankStatus: document.getElementById("rank-status"),
     footerBuildInfo: document.getElementById("footer-build-info"),
   };
@@ -128,7 +138,14 @@ const HPOApp = (() => {
     el.exportBtn.addEventListener("click", exportPdf);
     el.copyLinkBtn.addEventListener("click", copyShareLink);
     el.exportJsonBtn.addEventListener("click", exportJson);
-    el.exportCsvBtn.addEventListener("click", exportCsv);
+
+    el.suggestModeBtns.forEach((btn) => {
+      btn.addEventListener("click", () => {
+        state.activeSuggestMode = btn.dataset.suggestMode;
+        el.suggestModeBtns.forEach((b) => b.classList.toggle("active", b === btn));
+        renderSuggestList();
+      });
+    });
   }
 
   function loadExample(key) {
@@ -236,17 +253,15 @@ const HPOApp = (() => {
     if (!info) return;
     state.selected.set(termId, { id: termId, name: info.name });
     renderSelectedList();
-    if (state.activeTab === "disease" || state.activeTab === "gene") {
-      runRanking();
-    }
+    // Always (re)rank, not just when the Diseases/Genes tab is active -- the
+    // Selected tab's "Top matches so far" summary needs fresh scores too.
+    runRanking();
   }
 
   function removeTerm(termId) {
     state.selected.delete(termId);
     renderSelectedList();
-    if (state.activeTab === "disease" || state.activeTab === "gene") {
-      runRanking();
-    }
+    runRanking();
   }
 
   function renderSelectedList() {
@@ -465,10 +480,11 @@ const HPOApp = (() => {
     }
   }
 
-  // ---- share/export: a shareable URL (?terms=...) and JSON/CSV download of
-  // the current phenotype set. Everything here stays client-side -- the
-  // "shareable URL" is just this same static page with a query string, and
-  // JSON/CSV export is a Blob download, no server involved. ----
+  // ---- share/export: a shareable URL (?terms=...) and a full JSON export
+  // of the current phenotype set plus its disease/gene rankings. Everything
+  // here stays client-side -- the "shareable URL" is just this same static
+  // page with a query string, and JSON export is a Blob download, no server
+  // involved. ----
 
   function copyToClipboard(text, onDone) {
     const fallback = () => {
@@ -511,23 +527,41 @@ const HPOApp = (() => {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
+  // Full export: selected terms plus the complete current disease/gene
+  // rankings (not just the terms) -- everything currently cached in state
+  // from the last runRanking() pass, reshaped into a self-describing JSON
+  // document.
   function exportJson() {
     const terms = Array.from(state.selected.values());
-    const payload = { tool: "HPOGraph", exported: new Date().toISOString(), terms };
+    const diseases = state.lastDiseaseScores.map((s) => ({
+      id: s.diseaseId,
+      name: diseaseName(s.diseaseId),
+      source: s.diseaseId.split(":")[0],
+      score: Number(s.score.toFixed(4)),
+      scorePercent: Math.round(s.score * 100),
+      annotatedTerms: s.nTerms,
+    }));
+    const genes = state.lastGeneScores.map((g) => ({
+      symbol: g.symbol,
+      score: Number(g.score.toFixed(4)),
+      scorePercent: Math.round(g.score * 100),
+      bestSupportingDisease: { id: g.bestDisease, name: diseaseName(g.bestDisease) },
+      matchedDiseaseCount: g.nMatchedDiseases,
+      associationTypes: g.associationTypes,
+    }));
+    const payload = {
+      tool: "HPOGraph",
+      exported: new Date().toISOString(),
+      terms,
+      diseases,
+      genes,
+    };
     downloadBlob(
-      `hpograph-terms-${new Date().toISOString().slice(0, 10)}.json`,
+      `hpograph-export-${new Date().toISOString().slice(0, 10)}.json`,
       "application/json",
       JSON.stringify(payload, null, 2)
     );
     flashButton(el.exportJsonBtn, '<i class="fa fa-check"></i> Saved!');
-  }
-
-  function exportCsv() {
-    const terms = Array.from(state.selected.values());
-    const escapeCsv = (s) => `"${String(s).replace(/"/g, '""')}"`;
-    const lines = ["id,name", ...terms.map(({ id, name }) => `${escapeCsv(id)},${escapeCsv(name)}`)];
-    downloadBlob(`hpograph-terms-${new Date().toISOString().slice(0, 10)}.csv`, "text/csv", lines.join("\n"));
-    flashButton(el.exportCsvBtn, '<i class="fa fa-check"></i> Saved!');
   }
 
   // Keep the URL's ?terms= param in sync with the current selection, so the
@@ -564,7 +598,11 @@ const HPOApp = (() => {
     if (!lastValid) return false;
     renderSelectedList();
     focusOn(lastValid);
-    switchTab("disease");
+    // Stay on the Selected tab (the default) rather than jumping the user
+    // straight to Diseases -- opening a shared link shouldn't change which
+    // tab is active out from under them. Ranking still runs immediately so
+    // the "Top matches so far" summary and tab counts are ready either way.
+    runRanking();
     return true;
   }
 
@@ -627,8 +665,15 @@ const HPOApp = (() => {
       el.rankStatus.textContent = "Select one or more HPO terms to see ranked diseases and genes.";
       el.diseaseList.innerHTML = "";
       el.geneList.innerHTML = "";
+      if (el.clingenList) el.clingenList.innerHTML = "";
       el.tabDisease.textContent = "Diseases";
       el.tabGene.textContent = "Genes";
+      if (el.tabClinGen) el.tabClinGen.textContent = "ClinGen";
+      el.tabSuggest.textContent = "Suggest";
+      state.lastDiseaseScores = [];
+      state.lastGeneScores = [];
+      renderTopCandidatesSummary();
+      renderSuggestions();
       return;
     }
     el.rankStatus.textContent = `Scoring against ${terms.length} selected term(s)…`;
@@ -646,12 +691,142 @@ const HPOApp = (() => {
     state.lastGeneScores = geneScores;
     state.expandedDiseaseIds.clear();
     state.expandedGeneSymbols.clear();
+    state.expandedClinGenSymbols.clear();
 
     el.rankStatus.textContent = `${diseaseScores.length} candidate diseases scored in ${elapsed} ms.`;
     el.tabDisease.textContent = `Diseases (${diseaseScores.length})`;
     el.tabGene.textContent = `Genes (${geneScores.length})`;
-    renderDiseaseList();
-    renderGeneList();
+    // Each render step is isolated: a bug or bad data in any single one
+    // (e.g. an optional ClinGen table being unexpectedly absent) must never
+    // prevent the others from rendering.
+    runIsolated("renderDiseaseList", renderDiseaseList);
+    runIsolated("renderGeneList", renderGeneList);
+    runIsolated("renderClinGenList", renderClinGenList);
+    runIsolated("renderTopCandidatesSummary", renderTopCandidatesSummary);
+    runIsolated("renderSuggestions", renderSuggestions);
+  }
+
+  function runIsolated(name, fn) {
+    try {
+      fn();
+    } catch (e) {
+      console.error(`${name}() failed:`, e);
+    }
+  }
+
+  // ---- "Top matches so far" summary: shown on the Selected tab so a top-1
+  // snapshot (per disease source + top gene) is visible without having to
+  // switch tabs. Purely a read of already-computed state.lastDiseaseScores /
+  // state.lastGeneScores (both pre-sorted best-first by Ranking.rankDiseases
+  // / rankGenes) -- no extra scoring work happens here. ----
+  function renderTopCandidatesSummary() {
+    if (!el.topSummary) return;
+    if (!state.selected.size || !state.lastDiseaseScores.length) {
+      el.topSummary.innerHTML = "";
+      return;
+    }
+
+    const topByDb = {};
+    for (const s of state.lastDiseaseScores) {
+      const db = s.diseaseId.split(":")[0];
+      if (!topByDb[db]) topByDb[db] = s; // first hit per db = highest score (list is pre-sorted)
+    }
+    const topGene = state.lastGeneScores[0] || null;
+
+    const cards = [];
+    for (const db of DB_ORDER) {
+      const s = topByDb[db];
+      if (!s) continue;
+      const pct = Math.round(s.score * 100);
+      cards.push(`
+        <div class="hg-top-card" data-jump-disease="${db}">
+          <div class="hg-top-card-label">Top ${DB_LABELS[db] || db}</div>
+          <div class="hg-top-card-score" style="color:${scoreColor(pct)}">${pct}%</div>
+          <div class="hg-id">${s.diseaseId}</div>
+          <div class="hg-top-card-name">${escapeHtml(diseaseName(s.diseaseId))}</div>
+        </div>
+      `);
+    }
+    if (topGene) {
+      const pct = Math.round(topGene.score * 100);
+      cards.push(`
+        <div class="hg-top-card" data-jump-gene="1">
+          <div class="hg-top-card-label">Top gene</div>
+          <div class="hg-top-card-score" style="color:${scoreColor(pct)}">${pct}%</div>
+          <div class="hg-id">${escapeHtml(topGene.symbol)}</div>
+          <div class="hg-top-card-name">${topGene.nMatchedDiseases} linked disease${topGene.nMatchedDiseases === 1 ? "" : "s"}</div>
+        </div>
+      `);
+    }
+
+    if (!cards.length) {
+      el.topSummary.innerHTML = "";
+      return;
+    }
+
+    el.topSummary.innerHTML = `
+      <div class="hg-rel-head">Top matches so far</div>
+      <div class="hg-top-summary-grid">${cards.join("")}</div>
+    `;
+
+    el.topSummary.querySelectorAll("[data-jump-disease]").forEach((card) => {
+      card.addEventListener("click", () => {
+        state.activeDiseaseSource = card.dataset.jumpDisease;
+        switchTab("disease");
+      });
+    });
+    el.topSummary.querySelectorAll("[data-jump-gene]").forEach((card) => {
+      card.addEventListener("click", () => switchTab("gene"));
+    });
+  }
+
+  // ---- "Suggest more phenotypes": which un-selected HPO terms would help
+  // narrow things down, based on how they distribute across your current
+  // top-ranked candidate diseases? See Ranking.suggestTerms() for the
+  // scoring logic. Purely exploratory -- never auto-added, the clinician
+  // reviews and clicks "+ Add" themselves. ----
+  function renderSuggestions() {
+    if (!el.suggestList) return;
+    if (!state.selected.size || !state.lastDiseaseScores.length) {
+      state.lastSuggestions = { reinforcing: [], discriminative: [] };
+      el.tabSuggest.textContent = "Suggest";
+      el.suggestList.innerHTML = '<div class="hg-empty">Select at least one term to see suggestions here.</div>';
+      return;
+    }
+    const terms = Array.from(state.selected.keys());
+    state.lastSuggestions = Ranking.suggestTerms(terms, state.lastDiseaseScores);
+    const distinctCount = new Set([
+      ...state.lastSuggestions.discriminative.map((r) => r.hpoId),
+      ...state.lastSuggestions.reinforcing.map((r) => r.hpoId),
+    ]).size;
+    el.tabSuggest.textContent = `Suggest (${distinctCount})`;
+    renderSuggestList();
+  }
+
+  function renderSuggestList() {
+    if (!el.suggestList) return;
+    const rows = state.lastSuggestions[state.activeSuggestMode] || [];
+    if (!rows.length) {
+      el.suggestList.innerHTML = '<div class="hg-empty">No suggestions available for this term set yet.</div>';
+      return;
+    }
+    el.suggestList.innerHTML = rows
+      .map((r) => {
+        const pct = Math.round(r.coverage * 100);
+        return `
+          <div class="hg-suggest-row">
+            <div>
+              <span class="hg-id">${r.hpoId}</span> ${escapeHtml(r.name)}
+              <div class="hg-rank-meta">in ${r.diseaseCount}/${r.nCandidates} top candidates (${pct}%)</div>
+            </div>
+            <button class="hg-suggest-add-btn" data-add-term="${r.hpoId}">+ Add</button>
+          </div>
+        `;
+      })
+      .join("");
+    el.suggestList.querySelectorAll("[data-add-term]").forEach((btn) => {
+      btn.addEventListener("click", () => addTerm(btn.dataset.addTerm));
+    });
   }
 
   function diseaseName(id) {
@@ -827,6 +1002,7 @@ const HPOApp = (() => {
         <div class="hg-rank-row-content">
           <span class="hg-rank-score">${pct}%</span>
           <span class="hg-gene-symbol">${escapeHtml(symbol)}</span>
+          ${clinGenBadgeHtml(symbol)}
           <span class="hg-rank-meta">
             ${nMatchedDiseases} linked disease(s) · ${associationTypes.map(associationLabel).join(", ")}
             ${hasUnknown ? '<span title="Source database did not classify this association">ⓘ</span>' : ""}
@@ -835,6 +1011,146 @@ const HPOApp = (() => {
         </div>
         ${expanded ? `<div class="hg-explain-box" data-detail-gene="${cssId(symbol)}"></div>` : ""}
       </div>
+    `;
+  }
+
+  // ---- ClinGen: independent expert-panel gene-disease validity curations,
+  // joined into our data by gene symbol only (there is no simple, reliable
+  // MONDO-to-OMIM/Orphanet disease-level crosswalk, so this cannot be tied to
+  // a specific candidate disease -- only to a gene overall). Shown as a
+  // compact badge on each gene row, and as its own tab with full detail. ----
+  const CLINGEN_BADGE_COLORS = {
+    Definitive: "#1f9d55",
+    Strong: "#2f855a",
+    Moderate: "#b7791f",
+    Limited: "#c05621",
+    Disputed: "#dc2626",
+    Refuted: "#991b1b",
+    "No Known Disease Relationship": "#6b7280",
+  };
+
+  function clinGenBadgeHtml(symbol) {
+    try {
+      if (!Ranking.clinGenForGene) return "";
+      const info = Ranking.clinGenForGene(symbol);
+      if (!info || !info.best) return "";
+      const color = CLINGEN_BADGE_COLORS[info.best.classification] || "#6b7280";
+      return `<span class="hg-clingen-badge" style="color:${color}; border-color:${color}" title="ClinGen: ${escapeHtml(
+        info.best.classification
+      )} for ${escapeHtml(info.best.disease_label || "")}">ClinGen: ${escapeHtml(info.best.classification)}</span>`;
+    } catch (e) {
+      console.warn(`ClinGen badge failed for ${symbol}:`, e);
+      return "";
+    }
+  }
+
+  function renderClinGenList() {
+    if (!el.clingenList) return;
+    const scores = state.lastGeneScores;
+    if (!scores.length) {
+      el.clingenList.innerHTML = "";
+      if (el.tabClinGen) el.tabClinGen.textContent = "ClinGen";
+      return;
+    }
+
+    const withClinGen = scores
+      .map((g) => ({ gene: g, clinGen: Ranking.clinGenForGene(g.symbol) }))
+      .filter((x) => x.clinGen && x.clinGen.best);
+
+    if (el.tabClinGen) el.tabClinGen.textContent = `ClinGen (${withClinGen.length})`;
+
+    const summary = `
+      <div class="hg-rank-status">
+        ${withClinGen.length} of ${scores.length} candidate genes have a ClinGen curation on record.
+        The rest simply haven't been ClinGen-curated yet -- ClinGen covers roughly 3,000 of the ~45,000
+        HGNC-named genes, so an absence here is not itself negative evidence.
+      </div>
+    `;
+
+    if (!withClinGen.length) {
+      el.clingenList.innerHTML = summary + '<div class="hg-empty">None of the current candidate genes have a ClinGen curation.</div>';
+      return;
+    }
+
+    el.clingenList.innerHTML = summary + withClinGen.map(({ gene, clinGen }) => clinGenRowHtml(gene, clinGen)).join("");
+
+    el.clingenList.querySelectorAll("[data-toggle-clingen]").forEach((elm) => {
+      elm.addEventListener("click", () => {
+        const sym = elm.dataset.toggleClingen;
+        if (state.expandedClinGenSymbols.has(sym)) state.expandedClinGenSymbols.delete(sym);
+        else state.expandedClinGenSymbols.add(sym);
+        renderClinGenList();
+      });
+    });
+
+    for (const sym of state.expandedClinGenSymbols) {
+      const holder = el.clingenList.querySelector(`[data-detail-clingen="${cssId(sym)}"]`);
+      if (!holder) continue;
+      const entry = withClinGen.find((x) => x.gene.symbol === sym);
+      if (!entry) continue;
+      holder.innerHTML = clinGenDetailHtml(entry.clinGen);
+    }
+  }
+
+  function clinGenRowHtml(gene, clinGen) {
+    const pct = Math.round(gene.score * 100);
+    const symbol = gene.symbol;
+    const expanded = state.expandedClinGenSymbols.has(symbol);
+    const color = CLINGEN_BADGE_COLORS[clinGen.best.classification] || "#6b7280";
+    return `
+      <div class="hg-rank-row ${expanded ? "expanded" : ""}" data-toggle-clingen="${symbol}">
+        <div class="hg-rank-row-content">
+          <span class="hg-gene-symbol">${escapeHtml(symbol)}</span>
+          <span class="hg-clingen-badge" style="color:${color}; border-color:${color}">${escapeHtml(clinGen.best.classification)}</span>
+          <span class="hg-rank-meta">
+            for ${escapeHtml(clinGen.best.disease_label || "")} · your rank ${pct}% ·
+            ${clinGen.entries.length} curation${clinGen.entries.length === 1 ? "" : "s"} on file · click for details
+          </span>
+        </div>
+        ${expanded ? `<div class="hg-explain-box" data-detail-clingen="${cssId(symbol)}"></div>` : ""}
+      </div>
+    `;
+  }
+
+  function clinGenDetailHtml(clinGen) {
+    const entriesHtml = clinGen.entries
+      .map((e) => {
+        const color = CLINGEN_BADGE_COLORS[e.classification] || "#6b7280";
+        return `
+        <div class="hg-explain-row">
+          <span class="hg-clingen-badge" style="color:${color}; border-color:${color}">${escapeHtml(e.classification)}</span>
+          ${escapeHtml(e.disease_label || "")}
+          <span class="hg-rank-meta">
+            (${escapeHtml(e.moi || "inheritance unspecified")} ·
+            ${escapeHtml((e.classification_date || "").slice(0, 10) || "date unspecified")} ·
+            ${escapeHtml(e.gcep || "GCEP unspecified")})
+          </span>
+          ${e.report_url ? ` · <a href="${e.report_url}" target="_blank" rel="noopener">ClinGen report</a>` : ""}
+        </div>
+      `;
+      })
+      .join("");
+
+    const dosageHtml = clinGen.dosageActionability.length
+      ? `<div class="hg-explain-head">Dosage sensitivity / clinical actionability:</div>` +
+        clinGen.dosageActionability
+          .map(
+            (d) => `
+        <div class="hg-explain-row">
+          ${escapeHtml(d.disease_label || "(gene-level)")}<br>
+          ${d.dosage_haploinsufficiency ? `Haploinsufficiency: ${escapeHtml(d.dosage_haploinsufficiency)}<br>` : ""}
+          ${d.dosage_triplosensitivity ? `Triplosensitivity: ${escapeHtml(d.dosage_triplosensitivity)}<br>` : ""}
+          ${d.actionability_classification ? `Actionability: ${escapeHtml(d.actionability_classification)}` : ""}
+        </div>
+      `
+          )
+          .join("")
+      : "";
+
+    return `
+      <div class="hg-explain-head">All ClinGen gene-disease validity curations for this gene:</div>
+      ${entriesHtml}
+      ${dosageHtml}
     `;
   }
 

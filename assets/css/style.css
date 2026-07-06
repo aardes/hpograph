@@ -24,7 +24,7 @@ body {
 /* ---------- outer card ---------- */
 
 .hg-preview-card {
-  max-width: 1400px;
+  max-width: 95vw;
   margin: 0 auto;
   background: #fff;
   border: 1px solid var(--stroke);
@@ -424,6 +424,18 @@ body {
 .hg-gene-symbol { font-weight: 800; color: var(--ink); }
 .hg-rank-meta { margin-left: auto; font-size: 11px; color: var(--muted); }
 
+.hg-clingen-badge {
+  flex: 0 0 auto;
+  display: inline-block;
+  font-size: 10.5px;
+  font-weight: 800;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1.5px solid currentColor;
+  background: rgba(0, 0, 0, .04);
+  white-space: nowrap;
+}
+
 /* ---------- source sub-tabs (OMIM / ORPHA / DECIPHER) ---------- */
 
 .hg-subtab-bar { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
@@ -489,10 +501,80 @@ body {
 .hg-rel-pair { font-size: 12.5px; font-weight: 700; }
 .hg-rel-meta { font-size: 11px; color: var(--muted); margin-top: 3px; }
 
+/* ---------- top-matches summary (Selected tab) ---------- */
+
+.hg-top-summary:empty { display: none; }
+.hg-top-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+.hg-top-card {
+  border: 1px solid var(--stroke2);
+  background: rgba(17, 24, 39, .015);
+  border-radius: 10px;
+  padding: 9px 10px;
+  cursor: pointer;
+  transition: border-color .15s, background .15s;
+}
+.hg-top-card:hover { border-color: rgba(24, 184, 160, .35); background: rgba(24, 184, 160, .05); }
+.hg-top-card-label {
+  font-size: 10.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+  color: var(--muted);
+  margin-bottom: 3px;
+}
+.hg-top-card-score { font-size: 15px; font-weight: 800; margin-bottom: 2px; }
+.hg-top-card-name {
+  font-size: 11.5px;
+  color: rgba(11, 18, 32, .82);
+  margin-top: 2px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* ---------- Suggest tab ---------- */
+
+.hg-suggest-intro {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin: 0 0 10px;
+  line-height: 1.5;
+}
+.hg-suggest-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid var(--stroke2);
+  background: rgba(17, 24, 39, .015);
+  border-radius: 10px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  font-size: 12.5px;
+}
+.hg-suggest-add-btn {
+  flex: 0 0 auto;
+  background: #fff;
+  border: 1px solid var(--stroke2);
+  border-radius: 8px;
+  padding: 5px 10px;
+  font-size: 11.5px;
+  font-weight: 800;
+  color: var(--primary2);
+  cursor: pointer;
+  font-family: inherit;
+}
+.hg-suggest-add-btn:hover { background: rgba(24, 184, 160, .08); }
+
 /* ---------- documentation card ---------- */
 
 .hg-docs-card {
-  max-width: 1400px;
+  max-width: 95vw;
   margin: 16px auto 0;
   background: #fff;
   border: 1px solid var(--stroke);

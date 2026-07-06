@@ -41,6 +41,11 @@ PY_FILES = [
 
 EXPECTED_TABLES = {"terms", "edges", "synonyms", "alt_ids", "disease", "disease_hpo", "gene", "gene_disease", "meta"}
 
+# ClinGen tables are optional/gracefully-absent by design (they're only
+# populated when raw_data/Clingen-*.csv exports were available at build
+# time), so their absence is reported but never fails the smoke check.
+OPTIONAL_TABLES = {"clingen_validity", "clingen_dosage_actionability"}
+
 
 def check(name, ok, detail=""):
     status = "PASS" if ok else "FAIL"
@@ -114,7 +119,12 @@ def _check_schema(db_path):
         tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         conn.close()
         missing = EXPECTED_TABLES - tables
-        return check("database schema: expected tables present", not missing, f"missing: {sorted(missing)}")
+        ok = check("database schema: expected tables present", not missing, f"missing: {sorted(missing)}")
+        present_optional = OPTIONAL_TABLES & tables
+        print(
+            f"[INFO] optional ClinGen tables present: {sorted(present_optional) if present_optional else 'none (gracefully absent, not a failure)'}"
+        )
+        return ok
     except Exception as e:
         return check("database schema", False, str(e))
 

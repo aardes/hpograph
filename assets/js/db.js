@@ -17,7 +17,11 @@ const HPODB = (() => {
       locateFile: (file) => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.13.0/${file}`,
     });
 
-    const resp = await fetch("data/hpo.db.gz");
+    // cache: "no-store" -- the compiled DB changes across rebuilds/deploys,
+    // and a browser-cached stale copy with an older schema (e.g. missing a
+    // newly-added table) can otherwise cause hard-to-diagnose errors deep in
+    // ranking/rendering code that has no way to know it received old data.
+    const resp = await fetch("data/hpo.db.gz", { cache: "no-store" });
     if (!resp.ok) throw new Error(`Failed to fetch hpo.db.gz: ${resp.status}`);
 
     const contentLength = resp.headers.get("Content-Length");

@@ -44,6 +44,21 @@ subject to their own respective terms:
   - HGNC (HUGO Gene Nomenclature Committee) -- approved gene symbols and
     metadata (hgnc_complete_set). See https://www.genenames.org for terms.
 
+  - ClinGen (Clinical Genome Resource) -- gene-disease validity
+    classifications and gene dosage sensitivity / clinical actionability
+    curations (Gene-Disease Validity and Curation Activity summary
+    reports). Published by ClinGen (https://clinicalgenome.org) under the
+    CC0 1.0 Universal Public Domain Dedication. ClinGen requests attribution
+    where practical: "The following curated content was obtained from the
+    Clinical Genome Resource (www.clinicalgenome.org): Gene-Disease Validity
+    classifications, Gene Dosage Sensitivity classifications, and Clinical
+    Actionability scores." See https://clinicalgenome.org/docs/terms-of-use/
+    for full terms. ClinGen curations are joined into HPOGraph's data by
+    gene symbol only -- ClinGen keys its curations by MONDO disease ID, and
+    no reliable, simple MONDO-to-OMIM/Orphanet crosswalk is used here, so
+    ClinGen information should be read as "this gene, independent of the
+    specific candidate disease" rather than tied to one disease entry.
+
 It is the responsibility of any user or redistributor of HPOGraph's compiled
 database to review and comply with the license terms of each underlying
 data source listed above, independent of the HPOGraph license itself.

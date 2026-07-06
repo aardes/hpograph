@@ -318,6 +318,197 @@ const Ranking = (() => {
     return topCategories().filter((c) => anc.has(c.id));
   }
 
+  // ---- ClinGen gene-disease validity ----
+  // ClinGen's Gene-Disease Validity Classification is an independent,
+  // expert-panel-curated confidence signal (Definitive / Strong / Moderate /
+  // Limited / Disputed / Refuted / No Known Disease Relationship) -- a
+  // genuinely different kind of evidence from the phenotype-similarity
+  // ranking above. It is joined here by GENE SYMBOL ONLY: ClinGen keys its
+  // curations by MONDO disease ID, which has no simple, reliable mapping to
+  // the OMIM/Orphanet IDs our `disease` table uses, so we deliberately do
+  // NOT attempt to attach a ClinGen row to one specific candidate disease --
+  // only to a gene, independent of which of that gene's diseases is the
+  // current candidate. See README for more on this limitation.
+  const CLINGEN_WEIGHT = {
+    Definitive: 1.0,
+    Strong: 0.85,
+    Moderate: 0.6,
+    Limited: 0.3,
+    "No Known Disease Relationship": 0.1,
+    Disputed: 0.05,
+    Refuted: 0.0,
+  };
+  const clinGenCache = new Map();
+  const EMPTY_CLINGEN_RESULT = { entries: [], best: null, dosageActionability: [] };
+
+  // ClinGen tables are optional -- older/rebuilt databases may not have them
+  // at all. Checked once (via sqlite_master, which always exists) and cached,
+  // rather than letting a "no such table" error surface from every gene
+  // lookup and potentially abort whatever loop called into this.
+  let clinGenTablesAvailable = null;
+  function hasClinGenTables() {
+    if (clinGenTablesAvailable !== null) return clinGenTablesAvailable;
+    try {
+      const rows = HPODB.all(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('clingen_validity','clingen_dosage_actionability')"
+      );
+      clinGenTablesAvailable = rows.length === 2;
+    } catch (e) {
+      console.warn("Could not check for ClinGen tables:", e);
+      clinGenTablesAvailable = false;
+    }
+    return clinGenTablesAvailable;
+  }
+
+  function clinGenForGene(symbol) {
+    if (!hasClinGenTables()) return EMPTY_CLINGEN_RESULT;
+    if (clinGenCache.has(symbol)) return clinGenCache.get(symbol);
+    try {
+      const entries = HPODB.all(
+        "SELECT disease_label, mondo_id, moi, classification, classification_date, gcep, report_url FROM clingen_validity WHERE gene_symbol=?",
+        [symbol]
+      );
+      let best = null;
+      for (const e of entries) {
+        const w = CLINGEN_WEIGHT[e.classification] ?? 0;
+        if (!best || w > best.weight) best = { ...e, weight: w };
+      }
+      const dosageActionability = HPODB.all(
+        `SELECT disease_label, dosage_haploinsufficiency, dosage_triplosensitivity, dosage_report_url,
+                actionability_classification, actionability_report_url, actionability_group
+         FROM clingen_dosage_actionability WHERE gene_symbol=?`,
+        [symbol]
+      );
+      const result = { entries, best, dosageActionability };
+      clinGenCache.set(symbol, result);
+      return result;
+    } catch (e) {
+      // Defensive: never let a ClinGen lookup problem break disease/gene
+      // ranking or suggestions, which don't depend on this data.
+      console.warn(`ClinGen lookup failed for gene ${symbol}:`, e);
+      return EMPTY_CLINGEN_RESULT;
+    }
+  }
+
+  // Best ClinGen weight among the gene(s) linked to a candidate disease (via
+  // gene_disease -- unrelated to ClinGen's own MONDO ids). Returns 0.5
+  // ("neutral") when the disease has no linked genes, or when none of its
+  // linked genes have any ClinGen record at all -- absence of a ClinGen
+  // curation is common (only ~3,000 of ~45,000 HGNC genes are covered) and
+  // should not be read as negative evidence.
+  function diseaseClinGenWeight(diseaseId) {
+    if (!hasClinGenTables()) return 0.5;
+    try {
+      const genes = HPODB.all("SELECT DISTINCT gene_symbol FROM gene_disease WHERE disease_id=?", [diseaseId]);
+      if (!genes.length) return 0.5;
+      let best = null;
+      for (const { gene_symbol } of genes) {
+        const info = clinGenForGene(gene_symbol);
+        if (!info.best) continue; // this gene has no ClinGen record
+        if (best === null || info.best.weight > best) best = info.best.weight;
+      }
+      return best === null ? 0.5 : best;
+    } catch (e) {
+      console.warn(`ClinGen disease weight lookup failed for ${diseaseId}:`, e);
+      return 0.5;
+    }
+  }
+
+  // ---- phenotype suggestion: which un-selected HPO terms would be most
+  // useful to consider next, given how they distribute across your current
+  // top-ranked candidate diseases? ----
+  //
+  // For each of the top N candidate diseases (already sorted best-first by
+  // rankDiseases), look at their annotated HPO terms and compute, for every
+  // term not already selected, a weighted "coverage fraction" p(t): the
+  // share of top-N disease weight (using each disease's own ranking score as
+  // its weight) that is annotated with t.
+  //
+  //   - REINFORCING terms have p(t) close to 1 -- almost every leading
+  //     candidate has this finding, so if the patient does too, it
+  //     strengthens the current front-runners.
+  //   - DISCRIMINATIVE terms have p(t) close to 0.5 -- present in roughly
+  //     half the leading candidates and absent in the other half, so a
+  //     yes/no on this finding would meaningfully split the field. Scored
+  //     with 4*p*(1-p) (a standard Gini/variance-style "how much would this
+  //     split help" measure -- 0 at the extremes, 1 at p=0.5), multiplied by
+  //     the term's own specificity (gene_ic) so generic, low-information
+  //     terms don't crowd out clinically meaningful ones.
+  //
+  // Only disease-side data is used (not a separate gene-side pass): ranked
+  // genes are themselves derived from their best-supporting disease, so a
+  // gene's phenotype profile is already reachable through this same
+  // disease-annotation data -- a separate gene-based aggregation would
+  // mostly duplicate this signal rather than add new information.
+  //
+  // ClinGen re-weighting: within the pre-filter pool (top diseases by raw
+  // phenotype score), each disease's weight is nudged by up to +/-15% based
+  // on the best ClinGen validity classification among its linked genes
+  // (diseaseClinGenWeight above) before picking the final top-N pool and
+  // before aggregating term coverage. This is intentionally a SECONDARY
+  // signal layered on top of phenotype similarity, not a replacement for
+  // it -- a disease with a mediocre phenotype match can't out-rank a strong
+  // match just because of ClinGen, but among otherwise-similar candidates it
+  // nudges the suggestion pool toward better-validated gene-disease
+  // relationships. The main rankDiseases()/rankGenes() lists above are
+  // untouched by this -- only this suggestion pool uses it.
+  const SUGGEST_PREFILTER_POOL = 40; // raw-score candidates considered before ClinGen re-weighting
+  const SUGGEST_TOP_N_DISEASES = 15; // final pool size after ClinGen adjustment
+  const SUGGEST_MIN_DISEASE_COUNT = 2; // ignore terms seen in only one candidate (too noisy to act on)
+  const SUGGEST_MAX_RESULTS = 8;
+
+  function suggestTerms(patientTerms, diseaseScores) {
+    const selected = new Set(patientTerms);
+    const prefiltered = diseaseScores.filter((d) => d.score > 0).slice(0, SUGGEST_PREFILTER_POOL);
+    if (!prefiltered.length) return { reinforcing: [], discriminative: [] };
+
+    const top = prefiltered
+      .map((d) => {
+        const clinGenWeight = diseaseClinGenWeight(d.diseaseId);
+        return { ...d, weight: d.score * (0.85 + 0.3 * clinGenWeight), clinGenWeight };
+      })
+      .sort((a, b) => b.weight - a.weight)
+      .slice(0, SUGGEST_TOP_N_DISEASES);
+
+    const totalWeight = top.reduce((s, d) => s + d.weight, 0);
+    if (totalWeight <= 0) return { reinforcing: [], discriminative: [] };
+
+    const nameOf = (id) => HPODB.one("SELECT name FROM terms WHERE id=?", [id])?.name || id;
+
+    const agg = new Map(); // hpo_id -> { weight, diseaseCount }
+    for (const d of top) {
+      const dTerms = diseaseTerms(d.diseaseId);
+      for (const { hpo_id } of dTerms) {
+        if (selected.has(hpo_id)) continue;
+        if (!agg.has(hpo_id)) agg.set(hpo_id, { weight: 0, diseaseCount: 0 });
+        const entry = agg.get(hpo_id);
+        entry.weight += d.weight;
+        entry.diseaseCount += 1;
+      }
+    }
+
+    const rows = [];
+    for (const [hpo_id, { weight, diseaseCount }] of agg) {
+      if (diseaseCount < SUGGEST_MIN_DISEASE_COUNT) continue;
+      const p = weight / totalWeight;
+      rows.push({
+        hpoId: hpo_id,
+        name: nameOf(hpo_id),
+        coverage: p,
+        diseaseCount,
+        nCandidates: top.length,
+        discriminativeScore: 4 * p * (1 - p) * (ic(hpo_id) || 0),
+      });
+    }
+
+    const reinforcing = [...rows].sort((a, b) => b.coverage - a.coverage).slice(0, SUGGEST_MAX_RESULTS);
+    const discriminative = [...rows]
+      .sort((a, b) => b.discriminativeScore - a.discriminativeScore)
+      .slice(0, SUGGEST_MAX_RESULTS);
+
+    return { reinforcing, discriminative };
+  }
+
   return {
     loadGraph,
     rankDiseases,
@@ -325,6 +516,8 @@ const Ranking = (() => {
     explainDisease,
     pairwiseDistances,
     categoriesFor,
+    suggestTerms,
+    clinGenForGene,
     ancestors,
     ic,
   };
