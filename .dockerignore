@@ -1,0 +1,14 @@
+# Keeps the build context small and prevents anything not needed at
+# runtime from ever reaching the Docker daemon. The Dockerfile also COPYs
+# explicit paths rather than the whole repo, so this is mostly a
+# belt-and-suspenders / build-speed measure.
+.git
+.gitignore
+.github/
+raw_data/
+data/hpo.db
+scripts/__pycache__/
+__pycache__/
+*.pyc
+node_modules/
+.DS_Store

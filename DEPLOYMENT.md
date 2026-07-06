@@ -114,4 +114,54 @@ All asset references (`assets/js/*.js`, `assets/css/style.css`,
 `/assets/...`), and there are no `file://`- or server-relative-path
 assumptions anywhere in the codebase — this is what makes the same
 `index.html` work identically under `python3 -m http.server`, a raw git
-checkout opened with any static file server, and the deployed Workers URL.
+checkout opened with any static file server, the deployed Workers URL, and
+the Docker image below.
+
+## Docker (optional, for local/self-hosted use)
+
+This is a second, independent way to run HPOGraph — not a replacement for
+the Cloudflare deploy above, just an option for people who'd rather run it
+locally or on their own infrastructure. See
+[README.md § Running with Docker](README.md#running-with-docker) for the
+end-user instructions (`docker run` / `docker build`); this section is
+about *publishing* the image to Docker Hub.
+
+**One-time: create the repository on Docker Hub**
+
+1. Log into https://hub.docker.com/ (account `aardeshi`).
+2. **Create Repository** → name it `hpograph` → set visibility (Public, so
+   people can `docker pull` without logging in) → **Create**.
+   (Docker Hub can also auto-create a public repo on first `docker push` if
+   you skip this step, but creating it explicitly first lets you set the
+   description/README before anyone pulls it.)
+
+**Every time you want to publish a new image** (e.g. after a monthly data
+refresh, per `MAINTENANCE.md`):
+
+```bash
+# 1. Log in once per machine/session (prompts for a Docker Hub password
+#    or, better, an access token from Account Settings -> Security ->
+#    New Access Token -- avoids putting your real password in shell history).
+docker login
+
+# 2. Build, tagged for your Docker Hub namespace.
+docker build -t aardeshi/hpograph:latest .
+
+# 3. (Optional but recommended) also tag with the schema version so old
+#    pulls stay reproducible -- check data/hpo.db.gz's schema_version via
+#    the meta table, or the number in README's "Versioning" section.
+docker tag aardeshi/hpograph:latest aardeshi/hpograph:1.3
+
+# 4. Push both tags.
+docker push aardeshi/hpograph:latest
+docker push aardeshi/hpograph:1.3
+```
+
+Anyone can then run it with just:
+
+```bash
+docker run --rm -p 8080:80 aardeshi/hpograph:latest
+```
+
+No login needed to *pull* a public image — only `docker login` (as the
+`aardeshi` account) is needed to *push* new versions.

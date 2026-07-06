@@ -56,6 +56,7 @@ diagnostic accuracy.
 - [Sharing and exporting a phenotype set](#sharing-and-exporting-a-phenotype-set)
 - [Project layout](#project-layout)
 - [Deploying](#deploying-cloudflare-workers)
+- [Running with Docker](#running-with-docker)
 - [Versioning / data provenance](#versioning--data-provenance)
 - [Data verification history](#data-verification-history)
 - [Testing / smoke checks](#testing--smoke-checks)
@@ -539,9 +540,13 @@ raw_data/                (gitignored — put HPO/HGNC/OMIM source files here to 
                          optionally also ClinGen CSVs and Mondo SSSOM crosswalk files)
 wrangler.jsonc           Cloudflare Workers static-assets deployment config
 .assetsignore            files excluded from the deployed static-asset bundle
+Dockerfile               builds a self-contained nginx image serving the same static site
+docker/nginx.conf        server config (gzip disabled -- see Running with Docker above)
+.dockerignore            keeps raw_data/, data/hpo.db, .git out of the Docker build context
 LICENSE, NOTICE          usage terms (research/non-commercial + third-party data terms)
 CITATION.cff             citation metadata
-DEPLOYMENT.md            Cloudflare Workers deployment notes/troubleshooting
+DEPLOYMENT.md            Cloudflare Workers + Docker Hub deployment notes/troubleshooting
+docs/verification-reports/  monthly data-verification snapshots + growth-history page
 ```
 
 ## Deploying (Cloudflare Workers)
@@ -560,6 +565,44 @@ completes but shows "No URLs enabled".
 Every push to the connected branch (`main`) redeploys automatically. If you
 rebuild the database locally, just commit the new `data/hpo.db.gz` — no
 other steps required.
+
+## Running with Docker
+
+Prefer to run HPOGraph locally instead of (or alongside) the hosted copy?
+It's the same static site, served by a plain `nginx:alpine` container — no
+different from opening it with `python3 -m http.server`, just packaged.
+
+**Option 1 — pull the prebuilt image (no build needed):**
+
+```bash
+docker run --rm -p 8080:80 aardeshi/hpograph:latest
+```
+
+Then open http://localhost:8080. See
+[hub.docker.com/r/aardeshi/hpograph](https://hub.docker.com/r/aardeshi/hpograph)
+for available tags.
+
+**Option 2 — build it yourself from this repo:**
+
+```bash
+docker build -t hpograph .
+docker run --rm -p 8080:80 hpograph
+```
+
+Both give you the exact same app and database that's deployed at
+https://hpograph.amin-davani.workers.dev — running entirely on your own
+machine, still with nothing leaving your browser. The image is defined by
+`Dockerfile` + `docker/nginx.conf` at the repo root; nginx's own gzip
+module is deliberately disabled there (see the comment in
+`docker/nginx.conf`), since the app fetches and decompresses
+`data/hpo.db.gz` itself client-side (`assets/js/db.js`) and a
+server-applied `Content-Encoding: gzip` on top of that would make the
+browser auto-decompress it before the app's own decompression step runs,
+breaking the load.
+
+There's no build step and no image versioning tied to app releases yet —
+rebuild/re-pull to pick up a newer `data/hpo.db.gz` the same way you'd
+redeploy to Cloudflare (see [Rebuilding the database](#rebuilding-the-database)).
 
 ## Versioning / data provenance
 
