@@ -1,0 +1,57 @@
+HPOGraph
+Copyright (c) 2026 Amin Ardeshirdavani
+
+HPOGraph is a browser-based Human Phenotype Ontology (HPO) exploration and
+phenotype-driven disease/gene prioritization tool.
+
+LICENSE SUMMARY
+----------------
+HPOGraph's source code is free to use for research, academic, educational,
+and other non-commercial purposes under the terms of the "HPOGraph Research
+and Non-Commercial License" (see LICENSE in this repository).
+
+Companies, commercial users, and any commercial deployment of HPOGraph must
+contact the author before use, to obtain a separate written commercial
+license.
+
+  Author:  Amin Ardeshirdavani
+  GitHub:  https://github.com/aardes
+  Demo:    https://hpograph.amin-davani.workers.dev
+
+THIRD-PARTY DATA
+-----------------
+HPOGraph compiles and ships a SQLite database (data/hpo.db.gz) built from
+several independently maintained, third-party biomedical data sources.
+These sources are NOT covered by the HPOGraph license above and remain
+subject to their own respective terms:
+
+  - Human Phenotype Ontology (HPO) -- ontology graph and disease-phenotype
+    annotations (hp.json, phenotype.hpoa). Published by the HPO Consortium
+    (https://hpo.jax.org) under the Creative Commons Attribution 4.0
+    International License (CC BY 4.0). Attribution: Human Phenotype
+    Ontology Consortium.
+
+  - OMIM (Online Mendelian Inheritance in Man) -- disease identifiers and
+    names surfaced via HPO's annotation files reference OMIM entries. OMIM
+    data is subject to its own terms of use; see https://omim.org/help/agreement
+    Users who wish to redistribute or build commercial products on top of
+    OMIM-derived data must review and comply with OMIM's terms directly.
+
+  - Orphanet (ORPHA identifiers) -- rare disease identifiers and names
+    referenced via HPO's annotation files. See https://www.orphadata.com/
+    for Orphanet's own data usage terms.
+
+  - HGNC (HUGO Gene Nomenclature Committee) -- approved gene symbols and
+    metadata (hgnc_complete_set). See https://www.genenames.org for terms.
+
+It is the responsibility of any user or redistributor of HPOGraph's compiled
+database to review and comply with the license terms of each underlying
+data source listed above, independent of the HPOGraph license itself.
+
+NOT A DIAGNOSTIC TOOL
+-----------------------
+HPOGraph is intended for research, education, and phenotype-exploration
+purposes. It is not a standalone diagnostic tool, and its disease/gene
+ranking output must be interpreted by a qualified clinical or genetics
+professional -- it does not constitute a diagnosis or clinical
+recommendation on its own.

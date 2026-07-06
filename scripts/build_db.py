@@ -37,6 +37,11 @@ HP_FREQ_MAP = {
 FRACTION_RE = re.compile(r"^(\d+)/(\d+)$")
 PERCENT_RE = re.compile(r"^([\d.]+)\s*%$")
 
+# Bump this whenever the `meta` table's set of keys, or any table's columns,
+# change in a way the frontend should be able to detect/react to. Purely
+# additive data refreshes (new HPO release, same schema) do not need a bump.
+SCHEMA_VERSION = "1.1"
+
 
 def parse_frequency(raw):
     if not raw:
@@ -73,6 +78,12 @@ def load_ontology(raw_dir):
         data = json.load(f)
     g = data["graphs"][0]
 
+    # hp.json publishes its own release identifier as a versioned IRI, e.g.
+    # "http://purl.obolibrary.org/obo/hp/releases/2024-08-08/hp.json" -- this
+    # is the most reliable "what HPO release is this" marker available, so we
+    # surface it as build metadata (see meta table / --source-info below).
+    ontology_version = (g.get("meta", {}) or {}).get("version") or data.get("id") or ""
+
     terms = {}          # id -> dict(name, definition, obsolete)
     synonyms = defaultdict(set)
     alt_ids = {}         # alt_id -> canonical id
@@ -107,7 +118,7 @@ def load_ontology(raw_dir):
         if child in terms and parent in terms:
             edges.append((child, parent))
 
-    return terms, synonyms, alt_ids, edges
+    return terms, synonyms, alt_ids, edges, ontology_version
 
 
 def build_ancestor_map(edges):
@@ -145,7 +156,21 @@ def load_hpoa(raw_dir):
     diseases = {}  # id -> name
     disease_hpo = []  # (disease_id, hpo_id, frequency, onset, evidence, aspect, qualifier)
     with open(path, encoding="utf-8") as f:
-        lines = [l for l in f if not l.startswith("#")]
+        raw_lines = list(f)
+
+    # phenotype.hpoa's leading "#"-commented header carries its own release
+    # date/description (e.g. "#date: 2024-08-08"); capture it as build
+    # metadata before discarding comment lines for the TSV parse below.
+    header_lines = [l.lstrip("#").strip() for l in raw_lines if l.startswith("#")]
+    date_match = None
+    for hl in header_lines:
+        m = re.search(r"date:\s*(\S+)", hl, re.IGNORECASE)
+        if m:
+            date_match = m.group(1)
+            break
+    annotation_version = date_match or (header_lines[0] if header_lines else "")
+
+    lines = [l for l in raw_lines if not l.startswith("#")]
     reader = csv.DictReader(lines, delimiter="\t")
     for row in reader:
         did = row["database_id"].strip()
@@ -160,7 +185,7 @@ def load_hpoa(raw_dir):
         aspect = (row.get("aspect") or "").strip() or None
         qualifier = (row.get("qualifier") or "").strip() or None
         disease_hpo.append((did, hid, freq, onset, evidence, aspect, qualifier))
-    return diseases, disease_hpo
+    return diseases, disease_hpo, annotation_version
 
 
 def load_gene_disease(raw_dir):
@@ -185,7 +210,7 @@ def load_hgnc(raw_dir):
             fname = f
             break
     if not fname:
-        return []
+        return [], ""
     path = os.path.join(raw_dir, fname)
     rows = []
     with open(path, encoding="utf-8") as f:
@@ -204,7 +229,7 @@ def load_hgnc(raw_dir):
                 "prev_symbol": row.get("prev_symbol", "") or None,
                 "location": row.get("location", "") or None,
             })
-    return rows
+    return rows, fname
 
 
 def main():
@@ -217,11 +242,11 @@ def main():
         os.remove(args.out)
 
     print("Loading ontology (hp.json)...")
-    terms, synonyms, alt_ids, edges = load_ontology(args.raw_dir)
+    terms, synonyms, alt_ids, edges, ontology_version = load_ontology(args.raw_dir)
     print(f"  {len(terms)} terms, {len(edges)} is_a edges, {len(alt_ids)} alt-ids")
 
     print("Loading disease annotations (phenotype.hpoa)...")
-    diseases, disease_hpo = load_hpoa(args.raw_dir)
+    diseases, disease_hpo, annotation_version = load_hpoa(args.raw_dir)
     print(f"  {len(diseases)} diseases, {len(disease_hpo)} disease-HPO rows")
 
     print("Loading gene-disease associations (genes_to_disease.txt)...")
@@ -229,7 +254,7 @@ def main():
     print(f"  {len(gene_disease)} gene-disease rows")
 
     print("Loading HGNC gene metadata...")
-    genes = load_hgnc(args.raw_dir)
+    genes, hgnc_source_file = load_hgnc(args.raw_dir)
     print(f"  {len(genes)} approved genes")
 
     print("Computing ancestor closures for IC...")
@@ -498,6 +523,10 @@ def main():
         ("num_terms", str(len(terms))),
         ("num_genes", str(len(genes))),
         ("total_genes_with_any_hpo", str(total_genes_with_any_hpo)),
+        ("schema_version", SCHEMA_VERSION),
+        ("hpo_source", ontology_version or "https://hpo.jax.org (hp.json) -- version string not present in source file"),
+        ("phenotype_annotation_source", annotation_version or "https://hpo.jax.org (phenotype.hpoa) -- version string not present in source file"),
+        ("hgnc_source", hgnc_source_file or "https://www.genenames.org (hgnc_complete_set) -- file not found at build time"),
     ])
 
     conn.commit()

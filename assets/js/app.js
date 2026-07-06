@@ -35,7 +35,11 @@ const HPOApp = (() => {
     addFocusBtn: document.getElementById("add-focus-btn"),
     selectedList: document.getElementById("selected-list"),
     relationshipsPanel: document.getElementById("relationships-panel"),
+    exportActions: document.getElementById("export-actions"),
     exportBtn: document.getElementById("export-btn"),
+    copyLinkBtn: document.getElementById("copy-link-btn"),
+    exportJsonBtn: document.getElementById("export-json-btn"),
+    exportCsvBtn: document.getElementById("export-csv-btn"),
     exampleChips: document.querySelectorAll(".hg-example-chip"),
     tabSelected: document.getElementById("tab-selected"),
     tabDisease: document.getElementById("tab-disease"),
@@ -49,6 +53,7 @@ const HPOApp = (() => {
     diseaseList: document.getElementById("disease-list"),
     geneList: document.getElementById("gene-list"),
     rankStatus: document.getElementById("rank-status"),
+    footerBuildInfo: document.getElementById("footer-build-info"),
   };
 
   function setLoading(visible, text) {
@@ -69,7 +74,35 @@ const HPOApp = (() => {
     Ranking.loadGraph();
     setLoading(false);
     wireEvents();
-    renderSelectedList();
+    renderBuildInfo();
+    if (!loadTermsFromUrl()) {
+      renderSelectedList();
+    }
+  }
+
+  // Footer build/version info, read from the `meta` key/value table written
+  // by scripts/build_db.py. Older databases built before a given meta key
+  // existed simply won't have it -- every lookup here is optional, so a
+  // missing key degrades to a shorter footer line rather than an error.
+  function renderBuildInfo() {
+    try {
+      const rows = HPODB.all("SELECT key, value FROM meta");
+      const meta = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+      const parts = [];
+      if (meta.build_date) parts.push(`DB build ${meta.build_date}`);
+      if (meta.schema_version) parts.push(`schema v${meta.schema_version}`);
+      if (meta.num_terms) parts.push(`${Number(meta.num_terms).toLocaleString()} terms`);
+      el.footerBuildInfo.textContent = parts.length ? parts.join(" · ") : "Version info unavailable";
+
+      const tooltipParts = [];
+      if (meta.hpo_source) tooltipParts.push(`HPO: ${meta.hpo_source}`);
+      if (meta.phenotype_annotation_source) tooltipParts.push(`Annotations: ${meta.phenotype_annotation_source}`);
+      if (meta.hgnc_source) tooltipParts.push(`HGNC: ${meta.hgnc_source}`);
+      el.footerBuildInfo.title = tooltipParts.join("\n");
+    } catch (e) {
+      console.warn("Could not read build metadata:", e);
+      el.footerBuildInfo.textContent = "Version info unavailable";
+    }
   }
 
   function wireEvents() {
@@ -93,6 +126,9 @@ const HPOApp = (() => {
     });
 
     el.exportBtn.addEventListener("click", exportPdf);
+    el.copyLinkBtn.addEventListener("click", copyShareLink);
+    el.exportJsonBtn.addEventListener("click", exportJson);
+    el.exportCsvBtn.addEventListener("click", exportCsv);
   }
 
   function loadExample(key) {
@@ -232,7 +268,8 @@ const HPOApp = (() => {
         el.selectedList.appendChild(row);
       }
     }
-    el.exportBtn.style.display = state.selected.size ? "flex" : "none";
+    el.exportActions.style.display = state.selected.size ? "flex" : "none";
+    updateShareUrl();
     renderRelationships();
   }
 
@@ -406,21 +443,129 @@ const HPOApp = (() => {
     doc.save(`hpograph-report-${now.toISOString().slice(0, 10)}.pdf`);
   }
 
+  // Briefly swap a button's label to confirm an action succeeded (or
+  // failed), then restore it. Shared by every export/share button below.
+  function flashButton(btn, tempHtml, ms = 1800) {
+    const original = btn.innerHTML;
+    btn.classList.add("copied");
+    btn.innerHTML = tempHtml;
+    setTimeout(() => {
+      btn.classList.remove("copied");
+      btn.innerHTML = original;
+    }, ms);
+  }
+
   function exportPdf() {
-    const original = el.exportBtn.innerHTML;
     try {
       generatePdfReport();
-      el.exportBtn.classList.add("copied");
-      el.exportBtn.innerHTML = '<i class="fa fa-check"></i> Report downloaded!';
+      flashButton(el.exportBtn, '<i class="fa fa-check"></i> Report downloaded!');
     } catch (e) {
       console.error("PDF generation failed:", e);
-      el.exportBtn.innerHTML = '<i class="fa fa-exclamation-triangle"></i> Failed -- see console';
-    } finally {
-      setTimeout(() => {
-        el.exportBtn.classList.remove("copied");
-        el.exportBtn.innerHTML = original;
-      }, 1800);
+      flashButton(el.exportBtn, '<i class="fa fa-exclamation-triangle"></i> Failed -- see console');
     }
+  }
+
+  // ---- share/export: a shareable URL (?terms=...) and JSON/CSV download of
+  // the current phenotype set. Everything here stays client-side -- the
+  // "shareable URL" is just this same static page with a query string, and
+  // JSON/CSV export is a Blob download, no server involved. ----
+
+  function copyToClipboard(text, onDone) {
+    const fallback = () => {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      try {
+        document.execCommand("copy");
+      } catch (e) {
+        console.warn("Copy failed:", e);
+      }
+      document.body.removeChild(ta);
+      onDone();
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(onDone, fallback);
+    } else {
+      fallback();
+    }
+  }
+
+  function copyShareLink() {
+    copyToClipboard(location.href, () => {
+      flashButton(el.copyLinkBtn, '<i class="fa fa-check"></i> Copied!');
+    });
+  }
+
+  function downloadBlob(filename, mimeType, content) {
+    const blob = new Blob([content], { type: mimeType });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function exportJson() {
+    const terms = Array.from(state.selected.values());
+    const payload = { tool: "HPOGraph", exported: new Date().toISOString(), terms };
+    downloadBlob(
+      `hpograph-terms-${new Date().toISOString().slice(0, 10)}.json`,
+      "application/json",
+      JSON.stringify(payload, null, 2)
+    );
+    flashButton(el.exportJsonBtn, '<i class="fa fa-check"></i> Saved!');
+  }
+
+  function exportCsv() {
+    const terms = Array.from(state.selected.values());
+    const escapeCsv = (s) => `"${String(s).replace(/"/g, '""')}"`;
+    const lines = ["id,name", ...terms.map(({ id, name }) => `${escapeCsv(id)},${escapeCsv(name)}`)];
+    downloadBlob(`hpograph-terms-${new Date().toISOString().slice(0, 10)}.csv`, "text/csv", lines.join("\n"));
+    flashButton(el.exportCsvBtn, '<i class="fa fa-check"></i> Saved!');
+  }
+
+  // Keep the URL's ?terms= param in sync with the current selection, so the
+  // address bar itself is always a valid, shareable link (no explicit
+  // "generate link" step needed -- Copy Link just copies location.href).
+  function updateShareUrl() {
+    const url = new URL(location.href);
+    if (state.selected.size) {
+      url.searchParams.set("terms", Array.from(state.selected.keys()).join(","));
+    } else {
+      url.searchParams.delete("terms");
+    }
+    history.replaceState(null, "", url.toString());
+  }
+
+  // On page load, preselect terms from a shared ?terms=HP:x,HP:y URL.
+  // Unknown/invalid IDs are silently skipped rather than failing the whole
+  // load. Returns true if at least one valid term was preselected.
+  function loadTermsFromUrl() {
+    const raw = new URLSearchParams(location.search).get("terms");
+    if (!raw) return false;
+    const ids = raw
+      .split(",")
+      .map((s) => s.trim().toUpperCase())
+      .filter(Boolean);
+    let lastValid = null;
+    for (const id of ids) {
+      const info = HPOGraph.termInfo(id);
+      if (info) {
+        state.selected.set(id, { id, name: info.name });
+        lastValid = id;
+      }
+    }
+    if (!lastValid) return false;
+    renderSelectedList();
+    focusOn(lastValid);
+    switchTab("disease");
+    return true;
   }
 
   // ---- phenotype-set relationships: how close/far are the selected terms

@@ -1,0 +1,185 @@
+HPOGraph Research and Non-Commercial License
+Version 1.0
+
+Copyright (c) 2026 Amin Ardeshirdavani
+Repository: https://github.com/aardes/hpograph
+Public URL: https://hpograph.amin-davani.workers.dev
+
+1. Purpose
+
+HPOGraph is a browser-based tool for Human Phenotype Ontology (HPO)
+exploration, phenotype matching, and disease/gene prioritization support.
+This software is provided free of charge for research, academic,
+educational, and other non-commercial purposes, subject to the terms below.
+
+2. Definitions
+
+"Software" means the HPOGraph source code, documentation, scripts, user
+interface files, and related materials included in this repository.
+
+"Research and Non-Commercial Use" means use by individuals, academic
+institutions, hospitals, laboratories, public research organizations,
+students, educators, or non-profit organizations where the use is not
+primarily intended for commercial advantage, paid service delivery, product
+development, resale, sublicensing, or revenue generation.
+
+"Commercial Use" means any use of the Software, in whole or in part, by or
+for a company, commercial laboratory, paid clinical service provider,
+contract research organization, pharmaceutical company, biotechnology
+company, software vendor, diagnostic company, consultancy, or any other
+for-profit organization, including but not limited to:
+
+  - use in a commercial product or service;
+  - use in paid clinical, diagnostic, laboratory, or consulting workflows;
+  - integration into commercial software, databases, reports, or platforms;
+  - use to provide services to third parties for payment;
+  - internal use by a for-profit organization for product development,
+    business operations, commercial research, or service delivery;
+  - redistribution, hosting, sublicensing, or resale as part of a
+    commercial offering.
+
+3. Grant of Rights for Research and Non-Commercial Use
+
+Subject to the terms of this License, the copyright holder grants you a
+free, worldwide, non-exclusive, non-transferable, revocable license to:
+
+  - use the Software for Research and Non-Commercial Use;
+  - copy and install the Software for Research and Non-Commercial Use;
+  - modify the Software for Research and Non-Commercial Use;
+  - run the Software locally or on institutional infrastructure for
+    Research and Non-Commercial Use;
+  - share modified or unmodified copies with collaborators for Research and
+    Non-Commercial Use, provided that this License and copyright notice are
+    included.
+
+4. Commercial Use Requires Permission
+
+Commercial Use is not permitted under this License.
+
+Companies, commercial users, and any other users intending Commercial Use
+must obtain prior written permission from the copyright holder.
+
+To request commercial permission or a commercial license, contact:
+
+  Amin Ardeshirdavani
+  GitHub: https://github.com/aardes
+  Public project URL: https://hpograph.amin-davani.workers.dev
+
+No rights for Commercial Use are granted unless expressly agreed in writing
+by the copyright holder.
+
+5. Restrictions
+
+You may not:
+
+  - use the Software for Commercial Use without prior written permission;
+  - sell, rent, lease, sublicense, or otherwise commercially exploit the
+    Software without prior written permission;
+  - remove or alter copyright notices, license notices, attribution
+    notices, or disclaimer notices;
+  - represent the Software as a clinically validated diagnostic device or
+    standalone diagnostic tool;
+  - use the Software in a way that violates applicable laws, regulations,
+    ethical requirements, or third-party database terms;
+  - imply endorsement by the copyright holder without written permission.
+
+6. Third-Party Data and Database Terms
+
+The Software may use, reference, process, or display data derived from
+third-party resources, including but not limited to:
+
+  - Human Phenotype Ontology, HPO;
+  - phenotype-disease annotation resources;
+  - OMIM-linked data or identifiers;
+  - HGNC gene metadata;
+  - other publicly available biomedical databases.
+
+These third-party resources may be subject to their own licenses, terms of
+use, attribution requirements, access restrictions, or commercial-use
+restrictions.
+
+This License applies only to the HPOGraph Software created by the
+copyright holder. It does not grant any rights to third-party databases,
+ontologies, annotations, names, identifiers, or other external resources.
+
+Users are responsible for ensuring that their use of all third-party
+resources complies with the applicable third-party licenses and terms.
+
+7. Clinical and Research Disclaimer
+
+The Software is provided for research, education, phenotype exploration,
+and decision-support purposes only.
+
+The Software is not a medical device, is not clinically validated as a
+standalone diagnostic tool, and must not be used as the sole basis for
+diagnosis, treatment, reproductive decision-making, or clinical management.
+
+All results require review and interpretation by qualified healthcare,
+clinical genetics, laboratory, or research professionals.
+
+8. Attribution
+
+If you use HPOGraph in research, teaching, publications, presentations,
+reports, or derivative work, you should provide appropriate attribution to:
+
+  HPOGraph
+  Amin Ardeshirdavani
+  Repository: https://github.com/aardes/hpograph
+  Public URL: https://hpograph.amin-davani.workers.dev
+
+If a formal citation file is provided in the repository, please follow the
+citation instructions in that file.
+
+9. Contributions
+
+Unless otherwise agreed in writing, any contribution submitted to the
+HPOGraph repository may be incorporated into the Software and distributed
+under this License.
+
+By submitting a contribution, you represent that you have the right to
+submit it and that your contribution does not knowingly violate
+third-party rights.
+
+10. No Warranty
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, TITLE, NON-INFRINGEMENT, ACCURACY,
+COMPLETENESS, RELIABILITY, OR CLINICAL VALIDITY.
+
+THE COPYRIGHT HOLDER DOES NOT WARRANT THAT THE SOFTWARE WILL BE ERROR-FREE,
+SECURE, UPDATED, AVAILABLE, OR SUITABLE FOR ANY PARTICULAR PURPOSE.
+
+11. Limitation of Liability
+
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THE COPYRIGHT HOLDER
+SHALL NOT BE LIABLE FOR ANY CLAIM, DAMAGE, LOSS, LIABILITY, COST, OR
+EXPENSE ARISING FROM OR RELATED TO THE SOFTWARE OR ITS USE, INCLUDING BUT
+NOT LIMITED TO DIRECT, INDIRECT, INCIDENTAL, SPECIAL, CONSEQUENTIAL,
+EXEMPLARY, OR PUNITIVE DAMAGES; LOSS OF DATA; LOSS OF PROFITS; BUSINESS
+INTERRUPTION; CLINICAL, DIAGNOSTIC, OR RESEARCH ERRORS; OR FAILURE TO
+COMPLY WITH THIRD-PARTY TERMS.
+
+12. Termination
+
+This License terminates automatically if you violate its terms.
+
+Upon termination, you must stop using, copying, modifying, hosting, or
+distributing the Software and must delete or destroy all copies in your
+possession or control, unless otherwise required by law or agreed in
+writing.
+
+13. Permission for Other Uses
+
+For uses not clearly covered by this License, including commercial,
+clinical service, diagnostic, product integration, hosted service, or
+company-internal use, written permission is required.
+
+Contact the copyright holder before such use.
+
+14. Governing Language
+
+This License is written in English. If translated into another language,
+the English version controls in case of conflict.
+
+End of License.

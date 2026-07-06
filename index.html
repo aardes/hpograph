@@ -76,7 +76,12 @@
 
         <div id="panel-selected" class="hg-tab-panel">
           <div id="selected-list" class="hg-selected-list"></div>
-          <button id="export-btn" class="hg-export-btn" style="display:none"><i class="fa fa-file-pdf-o"></i> Download PDF report</button>
+          <div id="export-actions" class="hg-export-actions" style="display:none">
+            <button id="export-btn" class="hg-export-btn"><i class="fa fa-file-pdf-o"></i> Download PDF report</button>
+            <button id="copy-link-btn" class="hg-export-btn hg-export-btn-sm"><i class="fa fa-link"></i> Copy link</button>
+            <button id="export-json-btn" class="hg-export-btn hg-export-btn-sm"><i class="fa fa-code"></i> JSON</button>
+            <button id="export-csv-btn" class="hg-export-btn hg-export-btn-sm"><i class="fa fa-table"></i> CSV</button>
+          </div>
           <div id="relationships-panel" class="hg-relationships"></div>
         </div>
 
@@ -217,17 +222,34 @@
           app and runs entirely in your browser — no data you search or select ever leaves your device.
         </p>
         <p>
-          Known limitations: candidate disease matching relies on ancestor-closure overlap, so a disease
-          whose closest relation to a selected term is a distant "cousin" term (sharing a lower-level
-          ancestor rather than a direct ancestor/descendant) could occasionally be missed — this is rare in
-          practice for clinically specific term selections. There's no per-term severity/onset input yet,
-          and no accounts or persistence — your selected phenotype set lives only in this browser tab.
+          Known limitations: candidate disease matching pre-filters using ancestor and descendant overlap,
+          so a disease whose closest relation to a selected term is a "cousin" term reached only sideways
+          through a different branch could occasionally be missed — this is rare in practice for clinically
+          specific term selections. There's no per-term severity/onset input yet. Your selected phenotype
+          set lives in this browser tab, but can be shared via the page's URL or exported as JSON/CSV/PDF
+          (see the Selected tab).
         </p>
       </div>
     </details>
 
   </div>
 </section>
+
+<footer id="site-footer" class="hg-site-footer">
+  <div class="hg-footer-notice">
+    <span><strong>Free for research and academic use.</strong> Commercial use requires permission.</span>
+    <span>For research, education, and phenotype exploration only — not a standalone diagnostic tool.</span>
+  </div>
+  <div class="hg-footer-links">
+    <a href="https://github.com/aardes/hpograph" target="_blank" rel="noopener">Repository</a>
+    <span aria-hidden="true">·</span>
+    <a href="https://github.com/aardes/hpograph/blob/main/LICENSE" target="_blank" rel="noopener">License</a>
+    <span aria-hidden="true">·</span>
+    <a href="https://github.com/aardes" target="_blank" rel="noopener">Author: Amin Ardeshirdavani</a>
+    <span aria-hidden="true">·</span>
+    <span id="footer-build-info" title="">Version info loading…</span>
+  </div>
+</footer>
 
 <div id="loading-overlay" class="hg-loading-overlay">
   <div class="hg-loading-box">

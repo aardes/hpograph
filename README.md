@@ -1,14 +1,37 @@
 # HPOGraph
 
-A phenotype lookup tool for the Human Phenotype Ontology (HPO) that treats the
-ontology as what it actually is — a directed acyclic graph, not a tree —
-and turns a clinician-selected set of phenotypes into a ranked list of
-candidate diseases and genes.
+A browser-based tool for exploring the Human Phenotype Ontology (HPO) as what
+it actually is — a directed acyclic graph, not a tree — and for turning a
+clinician-selected set of phenotypes into a ranked list of candidate diseases
+and genes for differential-diagnosis and gene-prioritization support.
 
-Live app: this repo auto-deploys to Cloudflare Pages on every push to `main`.
+**Live demo:** https://hpograph.amin-davani.workers.dev
+**Repository:** https://github.com/aardes/hpograph
+
+## Usage and License
+
+HPOGraph is **free for research, academic, educational, and other
+non-commercial use**. Companies and commercial users must contact the author
+before using it commercially — see [LICENSE](LICENSE) and [NOTICE](NOTICE)
+for the full terms, and the [Citation](#citation) section below if you use
+it in published work.
+
+Author: Amin Ardeshirdavani — https://github.com/aardes
+
+## Clinical Disclaimer
+
+HPOGraph is a research, education, and phenotype-exploration tool. **It is
+not a standalone diagnostic tool.** Its disease/gene ranking is a
+decision-support aid, not a diagnosis — any output requires independent
+review and interpretation by a qualified clinical or genetics professional
+before it informs a real care decision. No clinical validation study has
+been performed on this tool; do not present its rankings as validated
+diagnostic accuracy.
 
 ## Contents
 
+- [Usage and License](#usage-and-license)
+- [Clinical Disclaimer](#clinical-disclaimer)
 - [Why a graph, not a tree](#why-a-graph-not-a-tree)
 - [Running it locally](#running-it-locally)
 - [Rebuilding the database](#rebuilding-the-database)
@@ -16,9 +39,13 @@ Live app: this repo auto-deploys to Cloudflare Pages on every push to `main`.
 - [How disease/gene ranking works](#how-diseasegene-ranking-works)
 - [Standalone term informativeness score](#standalone-term-informativeness-score)
 - [Phenotype-set relationships (the distance calculator)](#phenotype-set-relationships-the-distance-calculator)
+- [Sharing and exporting a phenotype set](#sharing-and-exporting-a-phenotype-set)
 - [Project layout](#project-layout)
-- [Deploying](#deploying-cloudflare-pages)
-- [Data licensing](#data-licensing-note)
+- [Deploying](#deploying-cloudflare-workers)
+- [Versioning / data provenance](#versioning--data-provenance)
+- [Testing / smoke checks](#testing--smoke-checks)
+- [Data Sources and Third-Party Terms](#data-sources-and-third-party-terms)
+- [Citation](#citation)
 - [Known limitations](#known-limitations--possible-next-steps)
 
 ## Architecture, in one paragraph
@@ -28,12 +55,13 @@ Everything runs client-side: the entire dataset ships as a single SQLite file
 [sql.js](https://github.com/sql-js/sql.js) (SQLite compiled to WebAssembly).
 There is no backend, no server-side database, and no API to pay for or keep
 running — the whole app is static files (HTML/CSS/JS + one data file), which
-is why it deploys for free on Cloudflare Pages (or GitHub Pages) with zero
-ongoing cost.
+is why it deploys for free on Cloudflare Workers' static-assets hosting (or
+GitHub Pages, or any static host) with zero ongoing cost.
 
 The file actually committed to the repo and served to the browser is
-`data/hpo.db.gz` (~11MB) — Cloudflare Pages (and most static hosts) reject
-individual deployed files over 25 MiB, and the raw sqlite file is ~42MB. The
+`data/hpo.db.gz` (~11MB) — Cloudflare's static asset hosting (and most
+static hosts) reject individual deployed files over 25 MiB, and the raw
+sqlite file is ~42MB. The
 browser fetches the gzipped file and decompresses it itself with the native
 `DecompressionStream` API before handing the bytes to sql.js (see
 `assets/js/db.js`) — no extra JS library, no server-side gzip negotiation.
@@ -92,7 +120,7 @@ load time, and everything else is plain JS files in `assets/js/`.
 ## Rebuilding the database
 
 `data/hpo.db` / `data/hpo.db.gz` are a compiled snapshot. They are **not**
-regenerated automatically by Cloudflare Pages — you rebuild them locally and
+regenerated automatically by Cloudflare — you rebuild them locally and
 commit the new `.gz` file whenever you want to pick up a newer HPO/OMIM/HGNC
 release.
 
@@ -111,8 +139,8 @@ release.
    a minute. It writes `data/hpo.db` and then automatically also writes the
    gzip-compressed `data/hpo.db.gz` that actually gets deployed.
 3. Commit `data/hpo.db.gz` (the plain `data/hpo.db` is gitignored — it's
-   ~42MB, over Cloudflare Pages' 25 MiB per-file limit, so it must never be
-   committed). Push, and Cloudflare Pages redeploys the new data automatically.
+   ~42MB, over Cloudflare's 25 MiB per-file limit, so it must never be
+   committed). Push, and Cloudflare redeploys the new data automatically.
 
 The script parses the raw files and compiles them into one compact SQLite
 database:
@@ -181,9 +209,24 @@ disease directly.
 
 `frequency_weight` uses the disease-term's annotated frequency where known
 (e.g. "5/8" or an HPO frequency sub-ontology term like "Occasional"),
-defaulting to 0.5 when unspecified. Candidate diseases are pre-filtered to
-those sharing at least one term in the selected terms' ancestor closure,
-which keeps scoring fast (typically well under a second in-browser).
+defaulting to 0.5 when unspecified.
+
+**Candidate pre-filtering.** Scoring every disease in the database for every
+query would be needlessly slow, so `Ranking.candidateDiseases()`
+(`assets/js/ranking.js`) first narrows the field to diseases annotated with
+a selected term, one of its **ancestors**, or one of its **descendants**.
+Ancestors catch diseases annotated more generically than what you picked;
+descendants catch diseases annotated more specifically (e.g. selecting the
+broad term "Abnormality of the hand" now also surfaces a disease annotated
+only with a narrower descendant like a specific finger deformity, which an
+ancestor-only filter would have missed entirely). Descendant expansion is
+capped at 500 descendants per term — a handful of very generic, high-level
+terms have thousands of descendants, and expanding those would balloon the
+candidate pool toward "score everything" for little benefit, since such
+broad terms are rarely what a clinician actually selects as a specific
+finding; for those, only the ancestor-based candidates are used. This
+pre-filter only affects which diseases get scored, never the score formula
+itself — semantic similarity above always compares via ancestors/MICA only.
 
 Gene scores are derived from each gene's best-supporting linked disease
 (`gene_disease` table); the UI lets you expand a gene row to see *every*
@@ -270,6 +313,27 @@ ancestor is the ontology root), correctly reflecting that these are
 phenotypically unrelated findings whose only connection would have to come
 from a specific multi-system disease, not from being "close" in the ontology.
 
+## Sharing and exporting a phenotype set
+
+A selected phenotype set can be shared or saved outside the app in a few
+ways (`assets/js/app.js`):
+
+- **Shareable URL.** The page URL's `?terms=` query parameter is kept in
+  sync with your selection, e.g.
+  `https://hpograph.amin-davani.workers.dev/?terms=HP:0001166,HP:0001083,HP:0002616`.
+  Opening a link like this preselects those terms on load (invalid/unknown
+  IDs are silently skipped) and re-runs ranking automatically. A "Copy link"
+  action copies the current URL to the clipboard.
+- **Export as JSON/CSV.** The selected-terms panel can export the current
+  phenotype set as a small JSON or CSV file (ID + name per term) for
+  record-keeping or for pasting into another tool.
+- **PDF report.** A one-page PDF summarizing the selection, phenotype-set
+  relationships, and top candidate diseases/genes (see the "Download PDF
+  report" button in the Selected tab).
+
+None of this involves a server: the shareable URL only encodes HPO IDs (no
+patient data), and JSON/CSV/PDF export happens entirely in the browser.
+
 ## Project layout
 
 ```
@@ -278,52 +342,119 @@ assets/css/style.css
 assets/js/db.js          sql.js loader + query wrapper
 assets/js/graph.js       Cytoscape.js DAG neighborhood view
 assets/js/ranking.js     IC/Resnik-Lin similarity + BMA ranking, explainability, relatedness
-assets/js/app.js         UI wiring (search, selected terms, tabs, ranking display)
+assets/js/app.js         UI wiring (search, selected terms, tabs, ranking display, export/share)
 data/hpo.db.gz           compiled, gzip-compressed database (committed; rebuilt via scripts/build_db.py)
 data/hpo.db              uncompressed build artifact (gitignored, ~42MB, never committed)
 scripts/build_db.py      ETL pipeline
+scripts/smoke_check.py   basic syntax/file/schema sanity checks (see Testing below)
 raw_data/                (gitignored — put HPO/HGNC/OMIM source files here to rebuild)
+wrangler.jsonc           Cloudflare Workers static-assets deployment config
+.assetsignore            files excluded from the deployed static-asset bundle
+LICENSE, NOTICE          usage terms (research/non-commercial + third-party data terms)
+CITATION.cff             citation metadata
+DEPLOYMENT.md            Cloudflare Workers deployment notes/troubleshooting
 ```
 
-## Deploying (Cloudflare Pages)
+## Deploying (Cloudflare Workers)
 
-Repo: https://github.com/aardes/hpograph
+Repo: https://github.com/aardes/hpograph — deployed at
+https://hpograph.amin-davani.workers.dev
 
-To connect it to Cloudflare Pages:
+This is a static site (no server logic), deployed to Cloudflare Workers'
+static-assets hosting via `wrangler.jsonc` (`assets.directory: "."`) rather
+than classic Cloudflare Pages, since new git-connected Cloudflare projects
+now default to the Workers deployment path. See
+[DEPLOYMENT.md](DEPLOYMENT.md) for the full step-by-step setup, including
+enabling the public `workers.dev` URL and troubleshooting a build that
+completes but shows "No URLs enabled".
 
-1. In the [Cloudflare dashboard](https://dash.cloudflare.com/), go to
-   **Workers & Pages → Create application → Pages tab → Import an existing
-   Git repository**.
-2. Authorize Cloudflare's GitHub app if prompted, and select the `aardes/hpograph`
-   repository, then **Begin setup**.
-3. Build settings (this is a pure static site, no build step needed —
-   `data/hpo.db.gz` is committed pre-built):
-   - **Framework preset:** None
-   - **Build command:** *(leave empty)*
-   - **Build output directory:** `/`
-4. Click **Save and Deploy**. Every future push to the connected branch
-   (`main`) redeploys automatically.
+Every push to the connected branch (`main`) redeploys automatically. If you
+rebuild the database locally, just commit the new `data/hpo.db.gz` — no
+other steps required.
 
-If you rebuild the database locally, just commit the new `data/hpo.db.gz` —
-no other steps required.
+## Versioning / data provenance
 
-## Data licensing note
+The compiled database carries its own build metadata in a `meta` table
+(key/value), queried by the app and shown in the footer / About section:
 
-HPO ontology/annotation data is CC BY 4.0 (Human Phenotype Ontology
-Consortium). OMIM-derived data (`mim2gene.txt`, and any OMIM disease
-identifiers/names surfaced from `phenotype.hpoa` / `genes_to_disease.txt`) is
-subject to the OMIM usage terms (https://omim.org/help/agreement) — free for
-individual/academic/non-commercial use; review those terms before any
-commercial deployment or bulk redistribution of OMIM-derived content.
+- `build_date` — when `scripts/build_db.py` was run
+- `schema_version` — bumped when the `meta` table's keys or any table's
+  columns change in a way the frontend should detect (currently `1.1`)
+- `hpo_source` — the HPO release identifier from `hp.json`'s own `meta.version`
+  field (a versioned IRI), when the source file provides one
+- `phenotype_annotation_source` — the release date from `phenotype.hpoa`'s
+  own header comment, when present
+- `hgnc_source` — the HGNC source filename (these typically embed a release
+  date, e.g. `hgnc_complete_set_2026-06-01.tsv`)
+- `num_terms`, `num_diseases_scored`, `num_genes`, `total_genes_with_any_hpo`
+  — corpus size at build time
+
+Older databases built before `schema_version` existed won't have these keys;
+the app treats every `meta` lookup as optional and falls back to "not
+recorded for this build" rather than failing, so a missing key never breaks
+the UI.
+
+## Testing / smoke checks
+
+`scripts/smoke_check.py` runs basic sanity checks with no dependencies
+beyond the Python 3 standard library and Node.js (for JS syntax checking):
+
+```bash
+python3 scripts/smoke_check.py
+```
+
+It checks that: every JS file under `assets/js/` parses (`node --check`),
+`scripts/build_db.py` compiles (`python3 -m py_compile`), the required files
+(`index.html`, `data/hpo.db.gz`, the four `assets/js/*.js` files) exist, and
+the database has the expected tables (`terms`, `edges`, `disease`,
+`disease_hpo`, `gene`, `gene_disease`, `meta`). It exits non-zero on any
+failure, so it can be wired into CI later if desired.
+
+## Data Sources and Third-Party Terms
+
+The compiled database draws on several independently maintained third-party
+sources, each with its own terms — see [NOTICE](NOTICE) for the full text:
+
+- **HPO** (ontology graph + disease-phenotype annotations) — CC BY 4.0,
+  Human Phenotype Ontology Consortium, https://hpo.jax.org
+- **OMIM** (disease identifiers/names referenced via HPO's annotation files)
+  — subject to OMIM's own terms, https://omim.org/help/agreement
+- **Orphanet** (ORPHA disease identifiers/names) — see
+  https://www.orphadata.com/
+- **HGNC** (approved gene symbols/metadata) — see https://www.genenames.org
+
+Review each source's terms directly before any commercial deployment or bulk
+redistribution of the compiled data — the HPOGraph license (see
+[Usage and License](#usage-and-license)) covers this repository's code only,
+not the third-party data it compiles.
+
+## Citation
+
+There's no dedicated paper yet. If you use HPOGraph in research or a
+publication, please cite the GitHub repository and/or the live tool URL for
+now — see [CITATION.cff](CITATION.cff) for machine-readable citation
+metadata.
 
 ## Known limitations / possible next steps
 
-- Candidate filtering uses ancestor-closure overlap only; a disease whose
-  closest relation to a selected term is a shared cousin term further down
-  the graph (not a direct ancestor/descendant) could be missed. Rare in
-  practice for clinically-specific term selections.
+- Candidate filtering uses ancestor **and** descendant closure (see above),
+  but a disease whose closest relation to a selected term is a shared
+  "cousin" term reached only sideways through a different branch (not a
+  direct ancestor or descendant) could still be missed. Rare in practice for
+  clinically-specific term selections.
 - No per-term severity/onset input from the clinician yet (the underlying
   `disease_hpo.onset` column is already populated and ready to use for this).
-- No accounts/persistence — selected term sets live in memory for the
-  session only. Could be added later via a Cloudflare Worker + D1 if needed,
-  without changing the free-hosting model.
+- No accounts/persistence beyond the shareable `?terms=` URL — a selected
+  term set otherwise lives in memory for the session only. Could be extended
+  later via a Cloudflare Worker + D1 if needed, without changing the
+  free-hosting model.
+- No clinical validation study has been performed; ranking quality has only
+  been sanity-checked against a handful of textbook cases during development
+  (see [How disease/gene ranking works](#how-diseasegene-ranking-works)).
+
+## Suggested repository topics
+
+For discoverability on GitHub, consider adding these topics under
+**Settings → General → Topics** (not set automatically by anything in this
+repo): `hpo`, `human-phenotype-ontology`, `phenotype`, `rare-disease`,
+`clinical-genomics`, `bioinformatics`, `sqlite-wasm`.

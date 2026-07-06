@@ -17,17 +17,22 @@
 // that are rarely annotated directly.)
 
 const Ranking = (() => {
-  let parents = null; // Map<child, Set<parent>>
-  let icMap = null;   // Map<term, ic>
+  let parents = null;  // Map<child, Set<parent>>
+  let children = null; // Map<parent, Set<child>> -- reverse of `parents`, built alongside it
+  let icMap = null;    // Map<term, ic>
   const ancestorCache = new Map();
+  const descendantCache = new Map();
 
   function loadGraph() {
     if (parents) return;
     parents = new Map();
+    children = new Map();
     const edgeRows = HPODB.all("SELECT child, parent FROM edges");
     for (const { child, parent } of edgeRows) {
       if (!parents.has(child)) parents.set(child, new Set());
       parents.get(child).add(parent);
+      if (!children.has(parent)) children.set(parent, new Set());
+      children.get(parent).add(child);
     }
     icMap = new Map();
     const termRows = HPODB.all("SELECT id, gene_ic FROM terms");
@@ -50,6 +55,28 @@ const Ranking = (() => {
       }
     }
     ancestorCache.set(t, seen);
+    return seen;
+  }
+
+  // Descendants of a term (self included), used only to widen candidate-disease
+  // *recall* below -- semantic similarity scoring still runs on ancestors()
+  // alone and is untouched by this.
+  function descendants(t) {
+    if (descendantCache.has(t)) return descendantCache.get(t);
+    const seen = new Set([t]);
+    const stack = [t];
+    while (stack.length) {
+      const cur = stack.pop();
+      const cs = children.get(cur);
+      if (!cs) continue;
+      for (const c of cs) {
+        if (!seen.has(c)) {
+          seen.add(c);
+          stack.push(c);
+        }
+      }
+    }
+    descendantCache.set(t, seen);
     return seen;
   }
 
@@ -83,11 +110,43 @@ const Ranking = (() => {
     return f === null || f === undefined ? 0.5 : f;
   }
 
-  // Candidate diseases: any disease annotated with a selected term or one of its ancestors.
+  // Candidate diseases: pre-filter which diseases are even worth scoring,
+  // before running the (more expensive) semantic-similarity pass below.
+  //
+  // Originally this only pulled in diseases annotated with a selected term or
+  // one of its ANCESTORS. That under-recalls: if a clinician selects a broad
+  // finding like "Abnormality of the hand", a disease annotated only with a
+  // specific descendant like "Camptodactyly" shares no ancestor with the
+  // selected term from this direction (its own ancestors go further UP
+  // toward the root, not down to what the user picked) and would never be
+  // considered a candidate at all -- even though "Camptodactyly" obviously IS
+  // a kind of hand abnormality.
+  //
+  // Fix: also pull in each selected term's DESCENDANTS, so diseases annotated
+  // with a more specific sub-term of what the user selected are found too.
+  // This only widens the candidate *pool*; scoreDisease()/linSim() below are
+  // completely unchanged and still compare via ancestors()/MICA as before,
+  // so the actual ranking formula and its output for any already-found
+  // disease is unaffected.
+  //
+  // Safety cap: descendant sets explode near the top of the ontology (e.g.
+  // an organ-system category can have thousands of descendants) -- expanding
+  // those would balloon the candidate pool toward "score every disease" and
+  // slow things down for little benefit, since such broad terms are rarely
+  // what a clinician actually selects as a specific finding. If a selected
+  // term's descendant set is larger than this cap, we skip the downward
+  // expansion for that term only (its ancestor-based candidates are still
+  // included as before).
+  const MAX_DESCENDANTS_FOR_CANDIDATE_EXPANSION = 500;
+
   function candidateDiseases(patientTerms) {
     const termSet = new Set();
     for (const p of patientTerms) {
       for (const a of ancestors(p)) termSet.add(a);
+      const desc = descendants(p);
+      if (desc.size <= MAX_DESCENDANTS_FOR_CANDIDATE_EXPANSION) {
+        for (const d of desc) termSet.add(d);
+      }
     }
     const ids = Array.from(termSet);
     const placeholders = ids.map(() => "?").join(",");

@@ -1,0 +1,30 @@
+cff-version: 1.2.0
+message: >-
+  There is no dedicated paper for HPOGraph yet. If you use it in your
+  research, please cite this GitHub repository and/or the live tool URL for
+  now.
+title: HPOGraph
+type: software
+authors:
+  - family-names: Ardeshirdavani
+    given-names: Amin
+    alias: aardes
+repository-code: "https://github.com/aardes/hpograph"
+url: "https://hpograph.amin-davani.workers.dev"
+abstract: >-
+  HPOGraph is a browser-based tool for exploring the Human Phenotype
+  Ontology (HPO) as a directed acyclic graph (rather than a simplified
+  tree), and for using a clinician-selected set of HPO phenotype terms to
+  rank candidate diseases and genes for differential-diagnosis and
+  gene-prioritization support. It runs entirely client-side (SQLite via
+  WebAssembly), with no backend and no data leaving the browser.
+keywords:
+  - hpo
+  - human-phenotype-ontology
+  - phenotype
+  - rare-disease
+  - clinical-genomics
+  - bioinformatics
+  - sqlite-wasm
+license: LicenseRef-HPOGraph-Research-and-Non-Commercial-License
+date-released: "2026-07-06"
