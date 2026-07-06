@@ -7,6 +7,21 @@ Inputs (in RAW_DIR):
   phenotype.hpoa                - disease <-> HPO annotations (frequency, onset, evidence)
   genes_to_disease.txt          - gene <-> disease associations
   hgnc_complete_set_*.tsv       - HGNC gene metadata
+  Clingen-Gene-Disease-Summary*.csv       - ClinGen gene-disease validity curations (optional)
+  Clingen-Curation-Activity-Summary*.csv  - ClinGen dosage sensitivity + actionability (optional)
+
+  The two ClinGen files are optional: if absent, the corresponding tables are
+  simply left empty and the app treats ClinGen data as unavailable rather
+  than failing. Download fresh copies from https://search.clinicalgenome.org/kb/gene-validity
+  (their filenames embed a download date, e.g. "-2026-07-06", which is why
+  we glob-match the prefix rather than an exact filename).
+
+  ClinGen curations key gene<->disease pairs by HGNC gene symbol and MONDO
+  disease ID. We only have a reliable crosswalk on the GENE side (HGNC
+  symbol, already in our `gene` table) -- MONDO has no simple direct mapping
+  to the OMIM/Orphanet IDs our `disease` table uses, so ClinGen data here is
+  joined and surfaced per-GENE only, not attached to a specific candidate
+  disease row. See README for more on this limitation.
 
 Output:
   hpo.db  (SQLite, self-contained, ready for sql.js in the browser)
@@ -40,7 +55,7 @@ PERCENT_RE = re.compile(r"^([\d.]+)\s*%$")
 # Bump this whenever the `meta` table's set of keys, or any table's columns,
 # change in a way the frontend should be able to detect/react to. Purely
 # additive data refreshes (new HPO release, same schema) do not need a bump.
-SCHEMA_VERSION = "1.1"
+SCHEMA_VERSION = "1.2"
 
 
 def parse_frequency(raw):
@@ -232,6 +247,95 @@ def load_hgnc(raw_dir):
     return rows, fname
 
 
+def _find_clingen_file(raw_dir, prefix):
+    """ClinGen export filenames embed a download date (e.g. '-2026-07-06'),
+    so match by prefix instead of an exact name. Returns None if not found --
+    ClinGen data is optional."""
+    import glob
+    matches = sorted(glob.glob(os.path.join(raw_dir, prefix + "*.csv")))
+    return matches[0] if matches else None
+
+
+def load_clingen_validity(raw_dir):
+    """Parse a ClinGen 'Gene-Disease-Summary' export: one row per gene<->MONDO
+    disease Gene-Disease Validity Classification (Definitive/Strong/Moderate/
+    Limited/Disputed/Refuted/No Known Disease Relationship), assigned by an
+    expert Gene Curation Expert Panel (GCEP). The file has a few metadata/
+    banner lines before the real header, and a decorative "+++++" divider
+    row right after it -- both are skipped.
+
+    Returns (rows, source_filename); ([], "") if the file isn't present.
+    """
+    path = _find_clingen_file(raw_dir, "Clingen-Gene-Disease-Summary")
+    if not path:
+        return [], ""
+    with open(path, encoding="utf-8-sig") as f:
+        lines = f.readlines()
+    hdr_idx = next((i for i, l in enumerate(lines) if l.startswith('"GENE SYMBOL"')), None)
+    if hdr_idx is None:
+        return [], ""
+    reader = csv.DictReader(lines[hdr_idx:])
+    rows = []
+    for row in reader:
+        symbol = (row.get("GENE SYMBOL") or "").strip()
+        if not symbol or symbol.startswith("+"):
+            continue
+        rows.append((
+            symbol,
+            (row.get("GENE ID (HGNC)") or "").strip(),
+            (row.get("DISEASE LABEL") or "").strip(),
+            (row.get("DISEASE ID (MONDO)") or "").strip(),
+            (row.get("MOI") or "").strip(),
+            (row.get("CLASSIFICATION") or "").strip(),
+            (row.get("CLASSIFICATION DATE") or "").strip(),
+            (row.get("GCEP") or "").strip(),
+            (row.get("ONLINE REPORT") or "").strip(),
+        ))
+    return rows, os.path.basename(path)
+
+
+def load_clingen_dosage_actionability(raw_dir):
+    """Parse a ClinGen 'Curation-Activity-Summary' export for dosage
+    sensitivity (haploinsufficiency/triplosensitivity) and clinical
+    actionability fields only -- gene-disease validity is already covered,
+    more cleanly, by load_clingen_validity() from the other export. Rows
+    with none of these three fields populated are skipped (nothing new to
+    add over the validity table). Returns (rows, source_filename).
+    """
+    path = _find_clingen_file(raw_dir, "Clingen-Curation-Activity-Summary")
+    if not path:
+        return [], ""
+    with open(path, encoding="utf-8-sig") as f:
+        lines = f.readlines()
+    hdr_idx = next((i for i, l in enumerate(lines) if l.startswith('"gene_symbol"')), None)
+    if hdr_idx is None:
+        return [], ""
+    reader = csv.DictReader(lines[hdr_idx:])
+    rows = []
+    for row in reader:
+        symbol = (row.get("gene_symbol") or "").strip()
+        if not symbol:
+            continue
+        haplo = (row.get("dosage_haploinsufficiency_assertion") or "").strip()
+        triplo = (row.get("dosage_triplosensitivity_assertion") or "").strip()
+        action_class = (row.get("actionability_assertion_classifications") or "").strip()
+        if not haplo and not triplo and not action_class:
+            continue
+        rows.append((
+            symbol,
+            (row.get("hgnc_id") or "").strip(),
+            (row.get("disease_label") or "").strip(),
+            (row.get("mondo_id") or "").strip(),
+            haplo,
+            triplo,
+            (row.get("dosage_report") or "").strip(),
+            action_class,
+            (row.get("actionability_assertion_reports") or "").strip(),
+            (row.get("actionability_groups") or "").strip(),
+        ))
+    return rows, os.path.basename(path)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--raw-dir", required=True)
@@ -256,6 +360,14 @@ def main():
     print("Loading HGNC gene metadata...")
     genes, hgnc_source_file = load_hgnc(args.raw_dir)
     print(f"  {len(genes)} approved genes")
+
+    print("Loading ClinGen gene-disease validity (optional)...")
+    clingen_validity, clingen_validity_source = load_clingen_validity(args.raw_dir)
+    print(f"  {len(clingen_validity)} rows" + (f" from {clingen_validity_source}" if clingen_validity_source else " (file not found -- skipped)"))
+
+    print("Loading ClinGen dosage/actionability (optional)...")
+    clingen_dosage, clingen_dosage_source = load_clingen_dosage_actionability(args.raw_dir)
+    print(f"  {len(clingen_dosage)} rows" + (f" from {clingen_dosage_source}" if clingen_dosage_source else " (file not found -- skipped)"))
 
     print("Computing ancestor closures for IC...")
     direct_parents = build_ancestor_map(edges)
@@ -473,6 +585,34 @@ def main():
         association_type TEXT,
         ncbi_gene_id TEXT
     );
+    -- ClinGen data below is joined/surfaced by GENE SYMBOL only. ClinGen
+    -- keys its curations by MONDO disease ID, which has no simple direct
+    -- mapping to the OMIM/Orphanet IDs disease.id uses here, so we do not
+    -- attempt to attach a ClinGen row to one specific disease candidate --
+    -- disease_label/mondo_id are kept only for display/reference.
+    CREATE TABLE clingen_validity (
+        gene_symbol TEXT,
+        hgnc_id TEXT,
+        disease_label TEXT,
+        mondo_id TEXT,
+        moi TEXT,
+        classification TEXT,
+        classification_date TEXT,
+        gcep TEXT,
+        report_url TEXT
+    );
+    CREATE TABLE clingen_dosage_actionability (
+        gene_symbol TEXT,
+        hgnc_id TEXT,
+        disease_label TEXT,
+        mondo_id TEXT,
+        dosage_haploinsufficiency TEXT,
+        dosage_triplosensitivity TEXT,
+        dosage_report_url TEXT,
+        actionability_classification TEXT,
+        actionability_report_url TEXT,
+        actionability_group TEXT
+    );
     """)
 
     cur.executemany(
@@ -501,6 +641,8 @@ def main():
                   g["omim_id"], g["alias_symbol"], g["prev_symbol"], g["location"]) for g in genes]
     cur.executemany("INSERT INTO gene VALUES (?,?,?,?,?,?,?,?,?)", gene_rows)
     cur.executemany("INSERT INTO gene_disease VALUES (?,?,?,?)", gene_disease)
+    cur.executemany("INSERT INTO clingen_validity VALUES (?,?,?,?,?,?,?,?,?)", clingen_validity)
+    cur.executemany("INSERT INTO clingen_dosage_actionability VALUES (?,?,?,?,?,?,?,?,?,?)", clingen_dosage)
 
     cur.executescript("""
     CREATE INDEX idx_terms_name_lc ON terms(name_lc);
@@ -514,6 +656,8 @@ def main():
     CREATE INDEX idx_gd_gene ON gene_disease(gene_symbol);
     CREATE INDEX idx_gd_disease ON gene_disease(disease_id);
     CREATE INDEX idx_gene_symbol ON gene(symbol);
+    CREATE INDEX idx_clingen_validity_gene ON clingen_validity(gene_symbol);
+    CREATE INDEX idx_clingen_dosage_gene ON clingen_dosage_actionability(gene_symbol);
     """)
 
     import datetime
@@ -527,6 +671,9 @@ def main():
         ("hpo_source", ontology_version or "https://hpo.jax.org (hp.json) -- version string not present in source file"),
         ("phenotype_annotation_source", annotation_version or "https://hpo.jax.org (phenotype.hpoa) -- version string not present in source file"),
         ("hgnc_source", hgnc_source_file or "https://www.genenames.org (hgnc_complete_set) -- file not found at build time"),
+        ("clingen_validity_source", clingen_validity_source or "not included in this build"),
+        ("clingen_dosage_actionability_source", clingen_dosage_source or "not included in this build"),
+        ("num_clingen_validity_rows", str(len(clingen_validity))),
     ])
 
     conn.commit()
