@@ -8,28 +8,6 @@ and genes for differential-diagnosis and gene-prioritization support.
 **Live demo:** https://hpograph.amin-davani.workers.dev
 **Repository:** https://github.com/aardes/hpograph
 
-## License and Usage
-
-HPOGraph is free for research, academic, educational, and non-commercial use.
-
-Commercial use, company use, commercial laboratory use, paid clinical
-service use, product integration, hosted commercial deployment, or use as
-part of a commercial software/service requires prior written permission
-from the author.
-
-Please see the `LICENSE` and `NOTICE` files for details.
-
-HPOGraph may use or display data derived from third-party biomedical
-resources, including HPO, OMIM-linked annotations, HGNC, and related
-resources. These resources may have their own licenses and terms of use.
-Users are responsible for ensuring compliance with all applicable
-third-party terms.
-
-HPOGraph is intended for research, education, and phenotype exploration. It
-is not a standalone diagnostic tool.
-
-Author: Amin Ardeshirdavani — https://github.com/aardes
-
 ## Clinical Disclaimer
 
 HPOGraph is a research, education, and phenotype-exploration tool. **It is
@@ -42,7 +20,6 @@ diagnostic accuracy.
 
 ## Contents
 
-- [License and Usage](#license-and-usage)
 - [Clinical Disclaimer](#clinical-disclaimer)
 - [Why a graph, not a tree](#why-a-graph-not-a-tree)
 - [Running it locally](#running-it-locally)
@@ -62,6 +39,7 @@ diagnostic accuracy.
 - [Data Sources and Third-Party Terms](#data-sources-and-third-party-terms)
 - [Citation](#citation)
 - [Known limitations](#known-limitations--possible-next-steps)
+- [License and Usage](#license-and-usage)
 
 ## Architecture, in one paragraph
 
@@ -705,3 +683,25 @@ metadata.
   exact-match crosswalk covers it (~83% of ClinGen's Mondo IDs); the rest
   falls back to gene-level context — see
   [ClinGen integration](#clingen-integration) for the exact coverage figures.
+
+## License and Usage
+
+HPOGraph is free for research, academic, educational, and non-commercial use.
+
+Commercial use, company use, commercial laboratory use, paid clinical
+service use, product integration, hosted commercial deployment, or use as
+part of a commercial software/service requires prior written permission
+from the author.
+
+Please see the `LICENSE` and `NOTICE` files for details.
+
+HPOGraph may use or display data derived from third-party biomedical
+resources, including HPO, OMIM-linked annotations, HGNC, and related
+resources. These resources may have their own licenses and terms of use.
+Users are responsible for ensuring compliance with all applicable
+third-party terms.
+
+HPOGraph is intended for research, education, and phenotype exploration. It
+is not a standalone diagnostic tool.
+
+Author: Amin Ardeshirdavani — https://github.com/aardes
