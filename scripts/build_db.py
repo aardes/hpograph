@@ -9,19 +9,25 @@ Inputs (in RAW_DIR):
   hgnc_complete_set_*.tsv       - HGNC gene metadata
   Clingen-Gene-Disease-Summary*.csv       - ClinGen gene-disease validity curations (optional)
   Clingen-Curation-Activity-Summary*.csv  - ClinGen dosage sensitivity + actionability (optional)
+  mondo_exactmatch_omim.sssom.tsv         - Mondo -> OMIM exact-match crosswalk (optional)
+  mondo.sssom.tsv                         - Mondo's full mapping set; only its Orphanet
+                                             exact-match subset is used (optional)
 
-  The two ClinGen files are optional: if absent, the corresponding tables are
-  simply left empty and the app treats ClinGen data as unavailable rather
-  than failing. Download fresh copies from https://search.clinicalgenome.org/kb/gene-validity
-  (their filenames embed a download date, e.g. "-2026-07-06", which is why
-  we glob-match the prefix rather than an exact filename).
+  The ClinGen and Mondo files are all optional: if absent, the corresponding
+  tables are simply left empty and the app treats that data as unavailable
+  rather than failing. Download fresh ClinGen copies from
+  https://search.clinicalgenome.org/kb/gene-validity (their filenames embed a
+  download date, e.g. "-2026-07-06", which is why we glob-match the prefix
+  rather than an exact filename); download Mondo's SSSOM releases from
+  https://github.com/monarch-initiative/mondo/releases.
 
-  ClinGen curations key gene<->disease pairs by HGNC gene symbol and MONDO
-  disease ID. We only have a reliable crosswalk on the GENE side (HGNC
-  symbol, already in our `gene` table) -- MONDO has no simple direct mapping
-  to the OMIM/Orphanet IDs our `disease` table uses, so ClinGen data here is
-  joined and surfaced per-GENE only, not attached to a specific candidate
-  disease row. See README for more on this limitation.
+  ClinGen curations key gene<->disease pairs by HGNC gene symbol and Mondo
+  disease ID. Mondo's own exact-match crosswalk (loaded into `mondo_xref`
+  below) resolves the large majority of our OMIM/Orphanet diseases to a
+  Mondo ID, letting most ClinGen rows be joined to one specific candidate
+  disease directly; where no exact Mondo match exists, ClinGen data falls
+  back to being surfaced per-GENE only (via the shared `gene` table), not
+  attached to a specific candidate disease row. See README for more detail.
 
 Output:
   hpo.db  (SQLite, self-contained, ready for sql.js in the browser)

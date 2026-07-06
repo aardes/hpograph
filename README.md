@@ -65,7 +65,7 @@ diagnostic accuracy.
 ## Architecture, in one paragraph
 
 Everything runs client-side: the entire dataset ships as a single SQLite file
-(`data/hpo.db`, ~43MB uncompressed) queried in the browser via
+(`data/hpo.db`, ~46MB uncompressed) queried in the browser via
 [sql.js](https://github.com/sql-js/sql.js) (SQLite compiled to WebAssembly).
 There is no backend, no server-side database, and no API to pay for or keep
 running — the whole app is static files (HTML/CSS/JS + one data file), which
@@ -73,9 +73,9 @@ is why it deploys for free on Cloudflare Workers' static-assets hosting (or
 GitHub Pages, or any static host) with zero ongoing cost.
 
 The file actually committed to the repo and served to the browser is
-`data/hpo.db.gz` (~11MB) — Cloudflare's static asset hosting (and most
+`data/hpo.db.gz` (~11.6MB) — Cloudflare's static asset hosting (and most
 static hosts) reject individual deployed files over 25 MiB, and the raw
-sqlite file is ~42MB. The
+sqlite file is ~46MB. The
 browser fetches the gzipped file and decompresses it itself with the native
 `DecompressionStream` API before handing the bytes to sql.js (see
 `assets/js/db.js`) — no extra JS library, no server-side gzip negotiation.
@@ -165,7 +165,7 @@ release.
    a minute. It writes `data/hpo.db` and then automatically also writes the
    gzip-compressed `data/hpo.db.gz` that actually gets deployed.
 3. Commit `data/hpo.db.gz` (the plain `data/hpo.db` is gitignored — it's
-   ~42MB, over Cloudflare's 25 MiB per-file limit, so it must never be
+   ~46MB, over Cloudflare's 25 MiB per-file limit, so it must never be
    committed). Push, and Cloudflare redeploys the new data automatically.
 
 The script parses the raw files and compiles them into one compact SQLite
@@ -447,12 +447,19 @@ ways (`assets/js/app.js`):
   IDs are silently skipped) and re-runs ranking automatically. A "Copy link"
   action copies the current URL to the clipboard.
 - **Export as JSON.** The selected-terms panel can export a single JSON file
-  containing the selected terms *and* the full current disease/gene ranking
-  (ID, name, source, score, matched-term/association details) for
-  record-keeping or for feeding into another tool.
+  containing the selected terms, the full current disease/gene ranking (ID,
+  name, source, score, matched-term/association details), each disease/gene's
+  ClinGen context where available (`clinGen: { classification, matchType,
+  ... }` -- `matchType` is `"disease"` for a direct Mondo-crosswalk match or
+  `"gene"` for the gene-level fallback, see
+  [ClinGen integration](#clingen-integration)), and the current Suggest-tab
+  results (`suggestedTerms.reinforcing` / `.discriminative`) -- a complete,
+  self-describing snapshot of everything visible on screen, for
+  record-keeping or feeding into another tool.
 - **PDF report.** A one-page PDF summarizing the selection, phenotype-set
-  relationships, and top candidate diseases/genes (see the "PDF report"
-  button in the Selected tab).
+  relationships, and top candidate diseases/genes, each annotated with its
+  ClinGen classification where available (see the "PDF report" button in the
+  Selected tab).
 
 None of this involves a server: the shareable URL only encodes HPO IDs (no
 patient data), and JSON/PDF export happens entirely in the browser.
@@ -464,13 +471,15 @@ index.html              entry point (also carries the on-page documentation sect
 assets/css/style.css
 assets/js/db.js          sql.js loader + query wrapper
 assets/js/graph.js       Cytoscape.js DAG neighborhood view
-assets/js/ranking.js     IC/Resnik-Lin similarity + BMA ranking, explainability, relatedness
+assets/js/ranking.js     IC/Resnik-Lin similarity + BMA ranking, explainability, relatedness,
+                         phenotype suggestion, ClinGen/Mondo lookups
 assets/js/app.js         UI wiring (search, selected terms, tabs, ranking display, export/share)
 data/hpo.db.gz           compiled, gzip-compressed database (committed; rebuilt via scripts/build_db.py)
-data/hpo.db              uncompressed build artifact (gitignored, ~42MB, never committed)
+data/hpo.db              uncompressed build artifact (gitignored, ~46MB, never committed)
 scripts/build_db.py      ETL pipeline
 scripts/smoke_check.py   basic syntax/file/schema sanity checks (see Testing below)
-raw_data/                (gitignored — put HPO/HGNC/OMIM source files here to rebuild)
+raw_data/                (gitignored — put HPO/HGNC/OMIM source files here to rebuild;
+                         optionally also ClinGen CSVs and Mondo SSSOM crosswalk files)
 wrangler.jsonc           Cloudflare Workers static-assets deployment config
 .assetsignore            files excluded from the deployed static-asset bundle
 LICENSE, NOTICE          usage terms (research/non-commercial + third-party data terms)
@@ -502,7 +511,7 @@ The compiled database carries its own build metadata in a `meta` table
 
 - `build_date` — when `scripts/build_db.py` was run
 - `schema_version` — bumped when the `meta` table's keys or any table's
-  columns change in a way the frontend should detect (currently `1.1`)
+  columns change in a way the frontend should detect (currently `1.3`)
 - `hpo_source` — the HPO release identifier from `hp.json`'s own `meta.version`
   field (a versioned IRI), when the source file provides one
 - `phenotype_annotation_source` — the release date from `phenotype.hpoa`'s
@@ -511,6 +520,14 @@ The compiled database carries its own build metadata in a `meta` table
   date, e.g. `hgnc_complete_set_2026-06-01.tsv`)
 - `num_terms`, `num_diseases_scored`, `num_genes`, `total_genes_with_any_hpo`
   — corpus size at build time
+- `clingen_validity_source`, `clingen_dosage_actionability_source`,
+  `num_clingen_validity_rows` — which ClinGen export files were used (or
+  `"not included in this build"` if absent) and how many validity rows were
+  loaded
+- `mondo_omim_xref_source`, `mondo_orpha_xref_source`, `num_mondo_xref_rows`
+  — which Mondo SSSOM crosswalk files were used (or `"not included in this
+  build"` if absent) and the total number of disease-to-Mondo mappings
+  loaded (see [ClinGen integration](#clingen-integration))
 
 Older databases built before `schema_version` existed won't have these keys;
 the app treats every `meta` lookup as optional and falls back to "not
@@ -531,7 +548,11 @@ It checks that: every JS file under `assets/js/` parses (`node --check`),
 (`index.html`, `data/hpo.db.gz`, the four `assets/js/*.js` files) exist, and
 the database has the expected tables (`terms`, `edges`, `disease`,
 `disease_hpo`, `gene`, `gene_disease`, `meta`). It exits non-zero on any
-failure, so it can be wired into CI later if desired.
+failure, so it can be wired into CI later if desired. It also reports
+(informationally, non-fatally) whether the optional `clingen_validity`,
+`clingen_dosage_actionability`, and `mondo_xref` tables are present, since
+these are meant to be gracefully absent on a database built without the
+corresponding optional source files.
 
 ## Data Sources and Third-Party Terms
 

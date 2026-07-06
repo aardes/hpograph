@@ -63,9 +63,9 @@ no dashboard changes needed for routine updates.
 ## The 25 MiB file-size limit
 
 Cloudflare rejects individual deployed files over 25 MiB. The compiled
-database (`data/hpo.db`) is ~42MB uncompressed, so it is **never committed**
+database (`data/hpo.db`) is ~46MB uncompressed, so it is **never committed**
 (gitignored). Instead, `scripts/build_db.py` also writes a gzip-compressed
-`data/hpo.db.gz` (~11MB), which *is* committed and deployed. The browser
+`data/hpo.db.gz` (~11.6MB), which *is* committed and deployed. The browser
 fetches the `.gz` file and decompresses it itself using the native
 `DecompressionStream` API (`assets/js/db.js`) before handing the bytes to
 sql.js — no extra JS library, no server-side gzip negotiation required.
@@ -85,7 +85,7 @@ curl -sI https://hpograph.amin-davani.workers.dev/data/hpo.db.gz | head -5
 
 The first should return `200` with `content-type: text/html`; the second
 `200` with `content-type: application/gzip` and a `content-length` in the
-11MB range. Then load the page in a real browser and confirm: the loading
+11-12MB range. Then load the page in a real browser and confirm: the loading
 bar completes, searching a term (e.g. "Arachnodactyly") shows results, and
 selecting a couple of terms produces a ranked disease/gene list.
 

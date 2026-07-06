@@ -108,6 +108,12 @@ const HPOApp = (() => {
       if (meta.hpo_source) tooltipParts.push(`HPO: ${meta.hpo_source}`);
       if (meta.phenotype_annotation_source) tooltipParts.push(`Annotations: ${meta.phenotype_annotation_source}`);
       if (meta.hgnc_source) tooltipParts.push(`HGNC: ${meta.hgnc_source}`);
+      if (meta.clingen_validity_source && meta.clingen_validity_source !== "not included in this build") {
+        tooltipParts.push(`ClinGen: ${meta.clingen_validity_source}`);
+      }
+      if (meta.mondo_omim_xref_source && meta.mondo_omim_xref_source !== "not included in this build") {
+        tooltipParts.push(`Mondo crosswalk: ${meta.mondo_omim_xref_source}`);
+      }
       el.footerBuildInfo.title = tooltipParts.join("\n");
     } catch (e) {
       console.warn("Could not read build metadata:", e);
@@ -416,7 +422,9 @@ const HPOApp = (() => {
         doc.text(`${pct}%`, marginX, y);
         setFont(9, "normal");
         doc.text(s.diseaseId, marginX + 18, y);
-        doc.text(truncatePdf(diseaseName(s.diseaseId), 62), marginX + 48, y);
+        const cg = clinGenSummaryForDisease(s.diseaseId);
+        const nameText = cg ? `${diseaseName(s.diseaseId)} [ClinGen: ${cg.classification}]` : diseaseName(s.diseaseId);
+        doc.text(truncatePdf(nameText, 58), marginX + 48, y);
         y += 5;
       }
       y += 3;
@@ -439,7 +447,9 @@ const HPOApp = (() => {
         doc.text(`${pct}%`, marginX, y);
         setFont(9, "normal");
         doc.text(g.symbol, marginX + 18, y);
-        doc.text(truncatePdf(diseaseName(g.bestDisease), 55), marginX + 40, y);
+        const cg = clinGenSummaryForGene(g.symbol);
+        const nameText = cg ? `${diseaseName(g.bestDisease)} [ClinGen: ${cg.classification}]` : diseaseName(g.bestDisease);
+        doc.text(truncatePdf(nameText, 50), marginX + 40, y);
         y += 5;
       }
     }
@@ -452,7 +462,8 @@ const HPOApp = (() => {
     setFont(7.5, "italic", [110, 110, 110]);
     const disclaimer =
       "HPOGraph is a decision-support aid for exploring phenotype-driven differential diagnoses -- it is not a diagnostic tool. " +
-      "Findings should be independently verified against primary sources before any clinical use. Data: HPO Consortium, OMIM, Orphanet, HGNC.";
+      "Findings should be independently verified against primary sources before any clinical use. Data: HPO Consortium, OMIM, Orphanet, " +
+      "HGNC, and, where available, ClinGen and the Mondo Disease Ontology.";
     doc.text(doc.splitTextToSize(disclaimer, pageWidth - marginX * 2), marginX, footerY);
 
     doc.save(`hpograph-report-${now.toISOString().slice(0, 10)}.pdf`);
@@ -527,10 +538,65 @@ const HPOApp = (() => {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
-  // Full export: selected terms plus the complete current disease/gene
-  // rankings (not just the terms) -- everything currently cached in state
-  // from the last runRanking() pass, reshaped into a self-describing JSON
-  // document.
+  // Shared by both exports (JSON + PDF): a clean, minimal ClinGen summary
+  // for a specific candidate disease, preferring the disease-specific Mondo
+  // crosswalk match and falling back to the gene-level signal, mirroring
+  // exactly what diseaseRowHtml()'s badge shows. Returns null if there's no
+  // ClinGen information at all for this disease (either way).
+  function clinGenSummaryForDisease(diseaseId) {
+    try {
+      if (Ranking.clinGenForDisease) {
+        const direct = Ranking.clinGenForDisease(diseaseId);
+        if (direct && direct.best) {
+          return {
+            classification: direct.best.classification,
+            matchType: "disease",
+            geneSymbol: direct.best.gene_symbol || null,
+          };
+        }
+      }
+      const genes = HPODB.all("SELECT DISTINCT gene_symbol FROM gene_disease WHERE disease_id=?", [diseaseId]);
+      let best = null;
+      for (const { gene_symbol } of genes) {
+        const info = Ranking.clinGenForGene(gene_symbol);
+        if (!info.best) continue;
+        if (!best || info.best.weight > best.weight) best = { ...info.best, geneSymbol: gene_symbol };
+      }
+      if (!best) return null;
+      return { classification: best.classification, matchType: "gene", geneSymbol: best.geneSymbol };
+    } catch (e) {
+      console.warn(`ClinGen summary failed for disease ${diseaseId}:`, e);
+      return null;
+    }
+  }
+
+  // Gene-level ClinGen summary (as shown on Genes-tab row badges) -- the
+  // gene's own best classification across all its ClinGen-curated diseases.
+  function clinGenSummaryForGene(symbol) {
+    try {
+      if (!Ranking.clinGenForGene) return null;
+      const info = Ranking.clinGenForGene(symbol);
+      if (!info || !info.best) return null;
+      return { classification: info.best.classification, diseaseLabel: info.best.disease_label || null };
+    } catch (e) {
+      console.warn(`ClinGen summary failed for gene ${symbol}:`, e);
+      return null;
+    }
+  }
+
+  function schemaVersion() {
+    try {
+      return HPODB.one("SELECT value FROM meta WHERE key='schema_version'")?.value || null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // Full export: selected terms, the complete current disease/gene
+  // rankings, ClinGen context for each, and the current phenotype
+  // suggestions -- everything currently cached in state from the last
+  // runRanking() pass, reshaped into a self-describing JSON document that
+  // mirrors what's on screen across every tab.
   function exportJson() {
     const terms = Array.from(state.selected.values());
     const diseases = state.lastDiseaseScores.map((s) => ({
@@ -540,6 +606,7 @@ const HPOApp = (() => {
       score: Number(s.score.toFixed(4)),
       scorePercent: Math.round(s.score * 100),
       annotatedTerms: s.nTerms,
+      clinGen: clinGenSummaryForDisease(s.diseaseId),
     }));
     const genes = state.lastGeneScores.map((g) => ({
       symbol: g.symbol,
@@ -548,13 +615,30 @@ const HPOApp = (() => {
       bestSupportingDisease: { id: g.bestDisease, name: diseaseName(g.bestDisease) },
       matchedDiseaseCount: g.nMatchedDiseases,
       associationTypes: g.associationTypes,
+      clinGen: clinGenSummaryForGene(g.symbol),
     }));
+    const suggestedTerms = {
+      reinforcing: state.lastSuggestions.reinforcing.map((r) => ({
+        hpoId: r.hpoId,
+        name: r.name,
+        coverage: Number(r.coverage.toFixed(4)),
+        diseaseCount: r.diseaseCount,
+      })),
+      discriminative: state.lastSuggestions.discriminative.map((r) => ({
+        hpoId: r.hpoId,
+        name: r.name,
+        discriminativeScore: Number(r.discriminativeScore.toFixed(4)),
+        diseaseCount: r.diseaseCount,
+      })),
+    };
     const payload = {
       tool: "HPOGraph",
+      schemaVersion: schemaVersion(),
       exported: new Date().toISOString(),
       terms,
       diseases,
       genes,
+      suggestedTerms,
     };
     downloadBlob(
       `hpograph-export-${new Date().toISOString().slice(0, 10)}.json`,
