@@ -37,6 +37,7 @@ JS_FILES = [
 
 PY_FILES = [
     "scripts/build_db.py",
+    "scripts/update_data.py",
 ]
 
 EXPECTED_TABLES = {"terms", "edges", "synonyms", "alt_ids", "disease", "disease_hpo", "gene", "gene_disease", "meta"}

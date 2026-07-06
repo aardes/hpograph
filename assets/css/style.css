@@ -125,7 +125,7 @@ body {
 
 .hg-main-grid {
   display: grid;
-  grid-template-columns: 1.5fr 1fr;
+  grid-template-columns: 1fr 1fr;
   gap: 16px;
   align-items: start;
 }
@@ -500,6 +500,38 @@ body {
 }
 .hg-rel-pair { font-size: 12.5px; font-weight: 700; }
 .hg-rel-meta { font-size: 11px; color: var(--muted); margin-top: 3px; }
+
+/* ---------- statistics charts (Chart.js) ---------- */
+
+.hg-chart-row {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+  margin-top: 12px;
+}
+@media (max-width: 700px) {
+  .hg-chart-row { grid-template-columns: 1fr; }
+}
+.hg-chart-box {
+  border: 1px solid var(--stroke2);
+  background: rgba(17, 24, 39, .015);
+  border-radius: 10px;
+  padding: 10px;
+  margin-top: 12px;
+}
+.hg-chart-label {
+  font-size: 10.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+/* Chart.js (responsive: true) manages the canvas's own width/height itself
+   based on this wrapper's size -- no explicit canvas sizing rule here, since
+   fighting Chart.js's own inline style assignment is a common cause of
+   invisible/degenerate charts. */
+.hg-chart-canvas-wrap { position: relative; height: 200px; }
 
 /* ---------- top-matches summary (Selected tab) ---------- */
 

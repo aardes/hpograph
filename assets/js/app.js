@@ -51,6 +51,7 @@ const HPOApp = (() => {
     tabGene: document.getElementById("tab-gene"),
     tabClinGen: document.getElementById("tab-clingen"),
     tabSuggest: document.getElementById("tab-suggest"),
+    tabStatistics: document.getElementById("tab-statistics"),
     tabs: document.querySelectorAll(".hg-tab-btn"),
     panels: {
       selected: document.getElementById("panel-selected"),
@@ -58,13 +59,68 @@ const HPOApp = (() => {
       gene: document.getElementById("panel-gene"),
       clingen: document.getElementById("panel-clingen"),
       suggest: document.getElementById("panel-suggest"),
+      statistics: document.getElementById("panel-statistics"),
     },
+    statisticsEmpty: document.getElementById("statistics-empty"),
     diseaseList: document.getElementById("disease-list"),
     geneList: document.getElementById("gene-list"),
     clingenList: document.getElementById("clingen-list"),
     rankStatus: document.getElementById("rank-status"),
     footerBuildInfo: document.getElementById("footer-build-info"),
+    scoreDistribution: document.getElementById("score-distribution"),
+    chartDiseaseScores: document.getElementById("chart-disease-scores"),
+    chartGeneScores: document.getElementById("chart-gene-scores"),
+    organSystemsChartWrap: document.getElementById("organ-systems-chart-wrap"),
+    chartOrganSystems: document.getElementById("chart-organ-systems"),
+    clingenChartWrap: document.getElementById("clingen-chart-wrap"),
+    chartClinGenBreakdown: document.getElementById("chart-clingen-breakdown"),
   };
+
+  // Chart.js instance registry -- one entry per canvas, so each render can
+  // destroy the previous instance before creating a new one (required by
+  // Chart.js when reusing the same <canvas>, and simpler/more robust than
+  // trying to mutate an existing chart's data in place for these
+  // infrequent, non-continuous updates).
+  const charts = { diseaseScore: null, geneScore: null, organSystems: null, clinGenBreakdown: null };
+  function destroyChart(key) {
+    if (charts[key]) {
+      charts[key].destroy();
+      charts[key] = null;
+    }
+  }
+  // Shared Chart.js look-and-feel, applied via options on every chart below
+  // rather than Chart.defaults globally, so this file doesn't silently
+  // affect a chart added elsewhere later.
+  const CHART_BASE_OPTIONS = {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: { duration: 200 },
+    plugins: { legend: { display: false } },
+  };
+
+  // Chart.js v3+ only auto-registers every controller/scale/element/plugin
+  // via its "chart.js/auto" entry point -- the plain UMD build we load here
+  // expects callers to register what they use. Done once, lazily, right
+  // before the first chart is created (rather than at script-load time)
+  // so this has no effect at all if Chart.js itself failed to load.
+  // Chart.register() is idempotent, so calling this more than once is safe.
+  let chartsRegistered = false;
+  function ensureChartsRegistered() {
+    if (chartsRegistered || typeof Chart === "undefined") return;
+    try {
+      Chart.register(
+        Chart.BarController,
+        Chart.BarElement,
+        Chart.CategoryScale,
+        Chart.LinearScale,
+        Chart.Tooltip,
+        Chart.Legend
+      );
+      chartsRegistered = true;
+    } catch (e) {
+      console.error("Chart.js component registration failed:", e);
+    }
+  }
 
   function setLoading(visible, text) {
     el.loading.style.display = visible ? "flex" : "none";
@@ -329,6 +385,31 @@ const HPOApp = (() => {
     return str.length > max ? str.slice(0, max - 1) + "…" : str;
   }
 
+  // Truncates ONLY the base text, then appends `suffix` untouched, so a
+  // fixed-width suffix like " [ClinGen: Moderate]" always survives even
+  // when the base text alone would already exceed `max` -- truncating the
+  // combined string first (as an earlier version of this code did) could
+  // silently cut the suffix off entirely for longer disease/gene names.
+  function truncatePdfWithSuffix(base, suffix, max) {
+    const budget = Math.max(0, max - (suffix ? suffix.length : 0));
+    return truncatePdf(base, budget) + (suffix || "");
+  }
+
+  // Plain-text ClinGen tag for the PDF's detailed disease/gene tables --
+  // shows ANY classification, mirroring the on-screen row badges (which are
+  // likewise unfiltered). Built on the same clinGenSummaryForDisease() /
+  // clinGenSummaryForGene() used everywhere else.
+  function clinGenTagText(info) {
+    return info ? ` [ClinGen: ${info.classification}]` : "";
+  }
+
+  // Plain-text ClinGen tag for the PDF's "Top matches so far" section --
+  // filtered to Definitive/Strong/Moderate only, mirroring the on-screen
+  // top-matches summary cards (see CLINGEN_SUMMARY_TIERS below).
+  function clinGenTierTagText(info) {
+    return info && CLINGEN_SUMMARY_TIERS.has(info.classification) ? ` [ClinGen: ${info.classification}]` : "";
+  }
+
   function generatePdfReport() {
     if (!window.jspdf || !window.jspdf.jsPDF) {
       console.warn("jsPDF failed to load -- cannot generate report.");
@@ -376,6 +457,58 @@ const HPOApp = (() => {
     }
     y += 3;
 
+    // -- top matches so far (mirrors the Selected tab's summary cards,
+    // via the same computeTopMatches() the on-screen widget uses) --
+    if (state.lastDiseaseScores.length && room(14)) {
+      const { topByDb, topGene } = computeTopMatches();
+      setFont(12, "bold", [11, 18, 32]);
+      doc.text("Top matches so far", marginX, y);
+      y += 6;
+
+      // Column layout: score | label | value. The label column width is
+      // measured from the actual label text (e.g. "Orphanet (ORPHA):" is
+      // much wider than "Gene:") rather than a fixed offset, so the value
+      // column never overlaps a long label. A single shared value-column
+      // x is used across all rows so the table still reads as aligned.
+      const labelColX = marginX + 16;
+      const labelGap = 3; // mm breathing room between label and value text
+      const rowsToShow = [
+        ...DB_ORDER.filter((db) => topByDb[db]).map((db) => ({
+          label: `${DB_LABELS[db] || db}:`,
+          text: diseaseName(topByDb[db].diseaseId),
+          suffix: clinGenTierTagText(clinGenSummaryForDisease(topByDb[db].diseaseId)),
+          pct: Math.round(topByDb[db].score * 100),
+        })),
+        ...(topGene
+          ? [
+              {
+                label: "Gene:",
+                text: topGene.symbol,
+                suffix: clinGenTierTagText(clinGenSummaryForGene(topGene.symbol)),
+                pct: Math.round(topGene.score * 100),
+              },
+            ]
+          : []),
+      ];
+      setFont(9, "bold");
+      const maxLabelWidth = rowsToShow.reduce((w, r) => Math.max(w, doc.getTextWidth(r.label)), 0);
+      const valueColX = labelColX + maxLabelWidth + labelGap;
+      const mmPerChar = 2.06; // observed average glyph width for this proportional font at 9pt, in mm
+      const valueMaxChars = Math.max(20, Math.floor((pageWidth - marginX - valueColX) / mmPerChar));
+
+      for (const r of rowsToShow) {
+        if (!room(5)) break;
+        setFont(9, "bold", scoreRgb(r.pct));
+        doc.text(`${r.pct}%`, marginX, y);
+        setFont(9, "bold");
+        doc.text(r.label, labelColX, y);
+        setFont(9, "normal");
+        doc.text(truncatePdfWithSuffix(r.text, r.suffix, valueMaxChars), valueColX, y);
+        y += 5;
+      }
+      y += 3;
+    }
+
     // -- phenotype-set relationships (only meaningful with 2+ terms) --
     const ids = Array.from(state.selected.keys());
     if (ids.length >= 2 && room(16)) {
@@ -422,9 +555,8 @@ const HPOApp = (() => {
         doc.text(`${pct}%`, marginX, y);
         setFont(9, "normal");
         doc.text(s.diseaseId, marginX + 18, y);
-        const cg = clinGenSummaryForDisease(s.diseaseId);
-        const nameText = cg ? `${diseaseName(s.diseaseId)} [ClinGen: ${cg.classification}]` : diseaseName(s.diseaseId);
-        doc.text(truncatePdf(nameText, 58), marginX + 48, y);
+        const cg = clinGenTagText(clinGenSummaryForDisease(s.diseaseId));
+        doc.text(truncatePdfWithSuffix(diseaseName(s.diseaseId), cg, 58), marginX + 48, y);
         y += 5;
       }
       y += 3;
@@ -447,9 +579,8 @@ const HPOApp = (() => {
         doc.text(`${pct}%`, marginX, y);
         setFont(9, "normal");
         doc.text(g.symbol, marginX + 18, y);
-        const cg = clinGenSummaryForGene(g.symbol);
-        const nameText = cg ? `${diseaseName(g.bestDisease)} [ClinGen: ${cg.classification}]` : diseaseName(g.bestDisease);
-        doc.text(truncatePdf(nameText, 50), marginX + 40, y);
+        const cg = clinGenTagText(clinGenSummaryForGene(g.symbol));
+        doc.text(truncatePdfWithSuffix(diseaseName(g.bestDisease), cg, 50), marginX + 40, y);
         y += 5;
       }
     }
@@ -696,6 +827,7 @@ const HPOApp = (() => {
     const ids = Array.from(state.selected.keys());
     if (ids.length < 2) {
       el.relationshipsPanel.innerHTML = "";
+      renderOrganSystemsChart(ids);
       return;
     }
 
@@ -728,6 +860,59 @@ const HPOApp = (() => {
           .join("")}
       </div>
     `;
+    renderOrganSystemsChart(ids);
+  }
+
+  // Horizontal bar chart of how many selected terms fall under each
+  // top-level organ system -- a visual companion to the "N organ systems
+  // spanned" text above. Only shown for 2+ selected terms, same as the
+  // relationships panel itself.
+  function renderOrganSystemsChart(ids) {
+    if (!el.organSystemsChartWrap || !el.chartOrganSystems) return;
+    if (typeof Chart === "undefined") {
+      el.organSystemsChartWrap.style.display = "none";
+      console.warn("Chart.js did not load -- organ-systems chart unavailable.");
+      return;
+    }
+    ensureChartsRegistered();
+    try {
+      if (ids.length < 2) {
+        el.organSystemsChartWrap.style.display = "none";
+        destroyChart("organSystems");
+        return;
+      }
+      const counts = new Map(); // category name -> count of selected terms under it
+      for (const id of ids) {
+        for (const c of Ranking.categoriesFor(id)) {
+          counts.set(c.name, (counts.get(c.name) || 0) + 1);
+        }
+      }
+      if (!counts.size) {
+        el.organSystemsChartWrap.style.display = "none";
+        destroyChart("organSystems");
+        return;
+      }
+      const sorted = Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
+      el.organSystemsChartWrap.style.display = "block";
+      destroyChart("organSystems");
+      charts.organSystems = new Chart(el.chartOrganSystems.getContext("2d"), {
+        type: "bar",
+        data: {
+          labels: sorted.map(([name]) => name),
+          datasets: [{ data: sorted.map(([, count]) => count), backgroundColor: "#18B8A0", borderRadius: 3 }],
+        },
+        options: {
+          ...CHART_BASE_OPTIONS,
+          indexAxis: "y",
+          scales: {
+            x: { beginAtZero: true, ticks: { stepSize: 1, precision: 0 } },
+            y: { grid: { display: false }, ticks: { font: { size: 10.5 } } },
+          },
+        },
+      });
+    } catch (e) {
+      console.error("renderOrganSystemsChart() failed:", e);
+    }
   }
 
   function switchTab(tab) {
@@ -738,6 +923,20 @@ const HPOApp = (() => {
     });
     if (tab === "disease" || tab === "gene") {
       runRanking();
+    }
+    if (tab === "statistics") {
+      // Chart canvases live in a tab panel that may have been display:none
+      // when their data last changed (charts are kept up to date in the
+      // background regardless of which tab is active) -- Chart.js can size
+      // a canvas incorrectly if it was created/updated while hidden, so
+      // force each existing chart to recompute its size now that the
+      // panel is actually visible.
+      Object.values(charts).forEach((c) => c && c.resize());
+      const anyChartShown =
+        el.scoreDistribution.style.display !== "none" ||
+        el.organSystemsChartWrap.style.display !== "none" ||
+        el.clingenChartWrap.style.display !== "none";
+      if (el.statisticsEmpty) el.statisticsEmpty.style.display = anyChartShown ? "none" : "block";
     }
   }
 
@@ -758,6 +957,7 @@ const HPOApp = (() => {
       state.lastGeneScores = [];
       renderTopCandidatesSummary();
       renderSuggestions();
+      renderScoreDistribution();
       return;
     }
     el.rankStatus.textContent = `Scoring against ${terms.length} selected term(s)…`;
@@ -788,6 +988,7 @@ const HPOApp = (() => {
     runIsolated("renderClinGenList", renderClinGenList);
     runIsolated("renderTopCandidatesSummary", renderTopCandidatesSummary);
     runIsolated("renderSuggestions", renderSuggestions);
+    runIsolated("renderScoreDistribution", renderScoreDistribution);
   }
 
   function runIsolated(name, fn) {
@@ -803,6 +1004,116 @@ const HPOApp = (() => {
   // switch tabs. Purely a read of already-computed state.lastDiseaseScores /
   // state.lastGeneScores (both pre-sorted best-first by Ranking.rankDiseases
   // / rankGenes) -- no extra scoring work happens here. ----
+  // ---- score drop-off charts: shows whether the current ranking has a
+  // clear leader or a cluster of near-ties, which the plain percentage list
+  // alone doesn't communicate well at a glance. ----
+  function renderScoreDistribution() {
+    if (!el.scoreDistribution) return;
+    if (typeof Chart === "undefined") {
+      el.scoreDistribution.style.display = "none";
+      console.warn("Chart.js did not load -- score distribution charts unavailable.");
+      return;
+    }
+    ensureChartsRegistered();
+    const hasDiseases = state.lastDiseaseScores.length > 0;
+    const hasGenes = state.lastGeneScores.length > 0;
+    if (!hasDiseases && !hasGenes) {
+      el.scoreDistribution.style.display = "none";
+      destroyChart("diseaseScore");
+      destroyChart("geneScore");
+      return;
+    }
+    el.scoreDistribution.style.display = "grid";
+
+    destroyChart("diseaseScore");
+    if (hasDiseases && el.chartDiseaseScores) {
+      try {
+        const top = state.lastDiseaseScores.slice(0, 15);
+        charts.diseaseScore = new Chart(el.chartDiseaseScores.getContext("2d"), {
+          type: "bar",
+          data: {
+            labels: top.map((_, i) => `#${i + 1}`),
+            datasets: [
+              {
+                data: top.map((s) => Math.round(s.score * 100)),
+                backgroundColor: top.map((s) => scoreColor(Math.round(s.score * 100))),
+                borderRadius: 3,
+              },
+            ],
+          },
+          options: {
+            ...CHART_BASE_OPTIONS,
+            plugins: {
+              ...CHART_BASE_OPTIONS.plugins,
+              tooltip: {
+                callbacks: {
+                  title: (items) => top[items[0].dataIndex].diseaseId,
+                  label: (item) => `${diseaseName(top[item.dataIndex].diseaseId)} — ${item.raw}%`,
+                },
+              },
+            },
+            scales: {
+              y: { beginAtZero: true, max: 100, ticks: { callback: (v) => v + "%" } },
+              x: { grid: { display: false } },
+            },
+          },
+        });
+      } catch (e) {
+        console.error("Disease score chart failed:", e);
+      }
+    }
+
+    destroyChart("geneScore");
+    if (hasGenes && el.chartGeneScores) {
+      try {
+        const top = state.lastGeneScores.slice(0, 15);
+        charts.geneScore = new Chart(el.chartGeneScores.getContext("2d"), {
+          type: "bar",
+          data: {
+            labels: top.map((g) => g.symbol),
+            datasets: [
+              {
+                data: top.map((g) => Math.round(g.score * 100)),
+                backgroundColor: top.map((g) => scoreColor(Math.round(g.score * 100))),
+                borderRadius: 3,
+              },
+            ],
+          },
+          options: {
+            ...CHART_BASE_OPTIONS,
+            plugins: {
+              ...CHART_BASE_OPTIONS.plugins,
+              tooltip: {
+                callbacks: {
+                  label: (item) => `${item.label} — ${item.raw}%`,
+                },
+              },
+            },
+            scales: {
+              y: { beginAtZero: true, max: 100, ticks: { callback: (v) => v + "%" } },
+              x: { grid: { display: false }, ticks: { autoSkip: false, maxRotation: 60, minRotation: 60, font: { size: 9 } } },
+            },
+          },
+        });
+      } catch (e) {
+        console.error("Gene score chart failed:", e);
+      }
+    }
+  }
+
+  // Single source of truth for "top 1 per disease source + top gene" --
+  // used by both the on-screen "Top matches so far" cards and the mirrored
+  // section in the PDF report, so the two can never drift apart.
+  function computeTopMatches() {
+    const topByDb = {};
+    for (const s of state.lastDiseaseScores) {
+      const db = s.diseaseId.split(":")[0];
+      if (!topByDb[db]) topByDb[db] = s; // first hit per db = highest score (list is pre-sorted)
+    }
+    const topGene = state.lastGeneScores[0] || null;
+    return { topByDb, topGene };
+  }
+
   function renderTopCandidatesSummary() {
     if (!el.topSummary) return;
     if (!state.selected.size || !state.lastDiseaseScores.length) {
@@ -810,12 +1121,7 @@ const HPOApp = (() => {
       return;
     }
 
-    const topByDb = {};
-    for (const s of state.lastDiseaseScores) {
-      const db = s.diseaseId.split(":")[0];
-      if (!topByDb[db]) topByDb[db] = s; // first hit per db = highest score (list is pre-sorted)
-    }
-    const topGene = state.lastGeneScores[0] || null;
+    const { topByDb, topGene } = computeTopMatches();
 
     const cards = [];
     for (const db of DB_ORDER) {
@@ -828,7 +1134,7 @@ const HPOApp = (() => {
           <div class="hg-top-card-score" style="color:${scoreColor(pct)}">${pct}%</div>
           <div class="hg-id">${s.diseaseId}</div>
           <div class="hg-top-card-name">${escapeHtml(diseaseName(s.diseaseId))}</div>
-          ${clinGenSummaryTagHtml(Ranking.clinGenForDisease ? Ranking.clinGenForDisease(s.diseaseId) : null)}
+          ${clinGenSummaryTagHtml(clinGenSummaryForDisease(s.diseaseId))}
         </div>
       `);
     }
@@ -840,7 +1146,7 @@ const HPOApp = (() => {
           <div class="hg-top-card-score" style="color:${scoreColor(pct)}">${pct}%</div>
           <div class="hg-id">${escapeHtml(topGene.symbol)}</div>
           <div class="hg-top-card-name">${topGene.nMatchedDiseases} linked disease${topGene.nMatchedDiseases === 1 ? "" : "s"}</div>
-          ${clinGenSummaryTagHtml(Ranking.clinGenForGene ? Ranking.clinGenForGene(topGene.symbol) : null)}
+          ${clinGenSummaryTagHtml(clinGenSummaryForGene(topGene.symbol))}
         </div>
       `);
     }
@@ -1031,44 +1337,33 @@ const HPOApp = (() => {
   // gene rows, which reflects a gene's best classification across ALL its
   // linked diseases. This one only shows when Mondo's exact-match crosswalk
   // resolves this exact candidate disease to a Mondo ID that ClinGen has
-  // curated directly (see Ranking.clinGenForDisease) -- i.e. it's evidence
-  // for this disease specifically, not inferred via a shared gene.
+  // curated directly -- i.e. it's evidence for this disease specifically,
+  // not inferred via a shared gene. Built on clinGenSummaryForDisease() --
+  // the same single source of truth used by the JSON/PDF exports and the
+  // top-matches summary tag below, so every surface agrees.
   function clinGenDiseaseBadgeHtml(diseaseId) {
-    try {
-      if (!Ranking.clinGenForDisease) return "";
-      const info = Ranking.clinGenForDisease(diseaseId);
-      if (!info || !info.best) return "";
-      const color = CLINGEN_BADGE_COLORS[info.best.classification] || "#6b7280";
-      return `<span class="hg-clingen-badge" style="color:${color}; border-color:${color}" title="ClinGen (this disease, via ${escapeHtml(
-        info.best.gene_symbol || ""
-      )}): ${escapeHtml(info.best.classification)}">ClinGen: ${escapeHtml(info.best.classification)}</span>`;
-    } catch (e) {
-      console.warn(`ClinGen disease badge failed for ${diseaseId}:`, e);
-      return "";
-    }
+    const info = clinGenSummaryForDisease(diseaseId);
+    if (!info) return "";
+    const color = CLINGEN_BADGE_COLORS[info.classification] || "#6b7280";
+    const titleSuffix = info.matchType === "disease" ? "this disease" : `via gene ${escapeHtml(info.geneSymbol || "")}`;
+    return `<span class="hg-clingen-badge" style="color:${color}; border-color:${color}" title="ClinGen (${titleSuffix}): ${escapeHtml(
+      info.classification
+    )}">ClinGen: ${escapeHtml(info.classification)}</span>`;
   }
 
   // Only surface a ClinGen tag on the "Top matches so far" summary cards for
   // stronger classifications (Definitive/Strong/Moderate) -- Limited,
   // Disputed, Refuted, and "No Known Disease Relationship" are meaningful in
   // the Diseases/Genes/ClinGen tabs but too weak a signal to earn space on
-  // this compact, at-a-glance summary. Accepts an already-fetched
-  // clinGenForDisease()/clinGenForGene() result (or null/undefined) so
-  // callers don't need their own try/catch.
+  // this compact, at-a-glance summary. Accepts a clinGenSummaryForDisease()/
+  // clinGenSummaryForGene() result (or null/undefined).
   const CLINGEN_SUMMARY_TIERS = new Set(["Definitive", "Strong", "Moderate"]);
   function clinGenSummaryTagHtml(info) {
-    try {
-      if (!info || !info.best) return "";
-      const classification = info.best.classification;
-      if (!CLINGEN_SUMMARY_TIERS.has(classification)) return "";
-      const color = CLINGEN_BADGE_COLORS[classification] || "#6b7280";
-      return `<span class="hg-clingen-badge hg-top-card-clingen" style="color:${color}; border-color:${color}">ClinGen: ${escapeHtml(
-        classification
-      )}</span>`;
-    } catch (e) {
-      console.warn("ClinGen summary tag failed:", e);
-      return "";
-    }
+    if (!info || !CLINGEN_SUMMARY_TIERS.has(info.classification)) return "";
+    const color = CLINGEN_BADGE_COLORS[info.classification] || "#6b7280";
+    return `<span class="hg-clingen-badge hg-top-card-clingen" style="color:${color}; border-color:${color}">ClinGen: ${escapeHtml(
+      info.classification
+    )}</span>`;
   }
 
   function renderGeneList() {
@@ -1160,18 +1455,78 @@ const HPOApp = (() => {
     "No Known Disease Relationship": "#6b7280",
   };
 
+  // Gene-level ClinGen badge -- built on clinGenSummaryForGene(), the same
+  // single source of truth used everywhere else (JSON/PDF exports, ClinGen
+  // tab, top-matches summary tag) so this never drifts from those.
   function clinGenBadgeHtml(symbol) {
+    const info = clinGenSummaryForGene(symbol);
+    if (!info) return "";
+    const color = CLINGEN_BADGE_COLORS[info.classification] || "#6b7280";
+    return `<span class="hg-clingen-badge" style="color:${color}; border-color:${color}" title="ClinGen: ${escapeHtml(
+      info.classification
+    )} for ${escapeHtml(info.diseaseLabel || "")}">ClinGen: ${escapeHtml(info.classification)}</span>`;
+  }
+
+  // Bar chart of how many current candidate genes fall into each ClinGen
+  // classification tier -- a quick read on how well-validated the current
+  // candidate pool is overall, ordered from strongest to weakest evidence
+  // (not alphabetically) and color-matched to the badges/rows using the
+  // same classification. `withClinGen` is the same array renderClinGenList()
+  // already builds ({ gene, clinGen } with the raw Ranking.clinGenForGene()
+  // shape), so nothing extra is computed here.
+  const CLINGEN_TIER_ORDER = [
+    "Definitive",
+    "Strong",
+    "Moderate",
+    "Limited",
+    "No Known Disease Relationship",
+    "Disputed",
+    "Refuted",
+  ];
+  function renderClinGenChart(withClinGen) {
+    if (!el.clingenChartWrap || !el.chartClinGenBreakdown) return;
+    if (typeof Chart === "undefined") {
+      el.clingenChartWrap.style.display = "none";
+      console.warn("Chart.js did not load -- ClinGen breakdown chart unavailable.");
+      return;
+    }
+    ensureChartsRegistered();
+    if (!withClinGen.length) {
+      el.clingenChartWrap.style.display = "none";
+      destroyChart("clinGenBreakdown");
+      return;
+    }
     try {
-      if (!Ranking.clinGenForGene) return "";
-      const info = Ranking.clinGenForGene(symbol);
-      if (!info || !info.best) return "";
-      const color = CLINGEN_BADGE_COLORS[info.best.classification] || "#6b7280";
-      return `<span class="hg-clingen-badge" style="color:${color}; border-color:${color}" title="ClinGen: ${escapeHtml(
-        info.best.classification
-      )} for ${escapeHtml(info.best.disease_label || "")}">ClinGen: ${escapeHtml(info.best.classification)}</span>`;
+      const counts = new Map();
+      for (const { clinGen } of withClinGen) {
+        const c = clinGen.best.classification;
+        counts.set(c, (counts.get(c) || 0) + 1);
+      }
+      const labels = CLINGEN_TIER_ORDER.filter((t) => counts.has(t));
+      el.clingenChartWrap.style.display = "block";
+      destroyChart("clinGenBreakdown");
+      charts.clinGenBreakdown = new Chart(el.chartClinGenBreakdown.getContext("2d"), {
+        type: "bar",
+        data: {
+          labels,
+          datasets: [
+            {
+              data: labels.map((l) => counts.get(l)),
+              backgroundColor: labels.map((l) => CLINGEN_BADGE_COLORS[l] || "#6b7280"),
+              borderRadius: 3,
+            },
+          ],
+        },
+        options: {
+          ...CHART_BASE_OPTIONS,
+          scales: {
+            y: { beginAtZero: true, ticks: { stepSize: 1, precision: 0 } },
+            x: { grid: { display: false }, ticks: { font: { size: 9.5 } } },
+          },
+        },
+      });
     } catch (e) {
-      console.warn(`ClinGen badge failed for ${symbol}:`, e);
-      return "";
+      console.error("ClinGen breakdown chart failed:", e);
     }
   }
 
@@ -1181,6 +1536,7 @@ const HPOApp = (() => {
     if (!scores.length) {
       el.clingenList.innerHTML = "";
       if (el.tabClinGen) el.tabClinGen.textContent = "ClinGen";
+      renderClinGenChart([]);
       return;
     }
 
@@ -1189,6 +1545,7 @@ const HPOApp = (() => {
       .filter((x) => x.clinGen && x.clinGen.best);
 
     if (el.tabClinGen) el.tabClinGen.textContent = `ClinGen (${withClinGen.length})`;
+    renderClinGenChart(withClinGen);
 
     if (!withClinGen.length) {
       el.clingenList.innerHTML = '<div class="hg-empty">None of the current candidate genes have a ClinGen curation.</div>';

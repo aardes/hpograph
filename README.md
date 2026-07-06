@@ -128,19 +128,50 @@ npx serve .
 ```
 
 No build step, no `npm install`, no dependencies to install — `index.html`
-pulls sql.js, Cytoscape.js, and the dagre layout extension from a CDN at
-load time, and everything else is plain JS files in `assets/js/`.
+pulls sql.js, Cytoscape.js, the dagre layout extension, jsPDF, and Chart.js
+from a CDN at load time, and everything else is plain JS files in
+`assets/js/`.
 
 ## Rebuilding the database
 
 `data/hpo.db` / `data/hpo.db.gz` are a compiled snapshot. They are **not**
 regenerated automatically by Cloudflare — you rebuild them locally and
-commit the new `.gz` file whenever you want to pick up a newer HPO/OMIM/HGNC
-release.
+commit the new `.gz` file whenever you want to pick up a newer HPO/OMIM/HGNC/
+Mondo release. HPO, HGNC, and Mondo each cut new releases roughly once a
+month, so as a maintenance cadence this project aims to refresh all source
+data about **once a month** — there's no automation that does this on a
+schedule (Cloudflare only serves whatever `data/hpo.db.gz` is currently
+committed), so it's a manual "run the update script, review, push" step.
+
+### Option A: automated (`scripts/update_data.py`)
+
+```bash
+python3 scripts/update_data.py
+```
+
+This downloads fresh copies of every source file the build needs straight
+into `raw_data/` (HPO's ontology/annotations/gene-disease files from its
+GitHub releases, HGNC's complete gene set, and Mondo's OMIM/Orphanet
+exact-match crosswalk files from its GitHub mappings directory — all from
+stable URLs that always resolve to the current release, no version-tag
+bookkeeping needed) and then runs `build_db.py` for you. Useful flags:
+
+- `--raw-dir DIR` / `--out PATH` — same meaning as `build_db.py`'s flags,
+  default to `raw_data` / `data/hpo.db`.
+- `--skip-download` — reuse whatever is already sitting in `raw_data/`
+  instead of re-downloading (handy if you only need to add the ClinGen
+  files below and re-run the build).
+
+The two ClinGen summary CSVs are **not** downloaded automatically — see the
+note under Option B for why — so if you want fresh ClinGen data, download
+those two files manually into `raw_data/` (once) and the script will pick
+them up on the next run.
+
+### Option B: manual
 
 1. Download fresh source files into a local `raw_data/` folder (this folder is
    gitignored — it's only a rebuild input, never committed):
-   - HPO ontology + annotations: https://hpo.jax.org/data/annotations
+   - HPO ontology + annotations: https://github.com/obophenotype/human-phenotype-ontology/releases/latest
      — need `hp.json`, `phenotype.hpoa`, `genes_to_disease.txt`
    - HGNC gene metadata: https://www.genenames.org/download/statistics-and-files/
      — need `hgnc_complete_set_*.tsv`
@@ -149,8 +180,11 @@ release.
      (`Clingen-Gene-Disease-Summary*.csv`, `Clingen-Curation-Activity-Summary*.csv`)
      — if these files are absent, the build simply skips the two ClinGen
      tables and the app degrades gracefully (no ClinGen tab/badges shown).
+     ClinGen generates these as a dated, click-to-export file rather than
+     publishing them at a fixed URL, which is why `update_data.py` can't
+     fetch them for you.
    - **Optional:** Mondo's exact-match crosswalk files, from
-     https://github.com/monarch-initiative/mondo/releases
+     https://github.com/monarch-initiative/mondo/tree/master/src/ontology/mappings
      (`mondo_exactmatch_omim.sssom.tsv` and the full `mondo.sssom.tsv`, which
      the build filters down to its Orphanet subset) — used to attach ClinGen
      data to a specific candidate disease (see
@@ -164,9 +198,12 @@ release.
    `sqlite3`, `json`, `csv`, `math` from the standard library) — takes under
    a minute. It writes `data/hpo.db` and then automatically also writes the
    gzip-compressed `data/hpo.db.gz` that actually gets deployed.
-3. Commit `data/hpo.db.gz` (the plain `data/hpo.db` is gitignored — it's
-   ~46MB, over Cloudflare's 25 MiB per-file limit, so it must never be
-   committed). Push, and Cloudflare redeploys the new data automatically.
+
+### After either option
+
+Commit `data/hpo.db.gz` (the plain `data/hpo.db` is gitignored — it's
+~46MB, over Cloudflare's 25 MiB per-file limit, so it must never be
+committed). Push, and Cloudflare redeploys the new data automatically.
 
 The script parses the raw files and compiles them into one compact SQLite
 database:
@@ -275,6 +312,11 @@ Arachnodactyly + Ectopia lentis + Aortic root aneurysm correctly ranks Marfan
 syndrome and related fibrillinopathies at the top of both the disease and gene
 lists (FBN1 first).
 
+The **Statistics tab** shows a **score drop-off chart** for the top 15
+diseases and top 15 genes -- a quick visual read on whether the ranking has a
+clear leader or a cluster of near-ties, which is harder to judge from a
+percentage list alone.
+
 ## Standalone term informativeness score
 
 Separate from the ranking above, every HPO term also carries a standalone
@@ -345,6 +387,9 @@ systems — showed pairwise distances all above 0.97 (their only shared
 ancestor is the ontology root), correctly reflecting that these are
 phenotypically unrelated findings whose only connection would have to come
 from a specific multi-system disease, not from being "close" in the ontology.
+
+A horizontal bar chart on the **Statistics tab** visualizes the organ-system
+counts directly, as a companion to the "N organ systems spanned" text.
 
 ## Suggested phenotype terms
 
@@ -435,6 +480,11 @@ HGNC-named genes at any given ClinGen release), so the absence of a badge or
 ClinGen-tab entry for a gene is not itself negative evidence — it usually
 just means that gene hasn't been through ClinGen's curation process yet.
 
+The **Statistics tab** also shows a bar chart of how many current candidate
+genes fall into each classification tier, ordered strongest to weakest
+evidence (not alphabetically) — a quick read on how well-validated the
+current candidate pool is overall.
+
 ## Sharing and exporting a phenotype set
 
 A selected phenotype set can be shared or saved outside the app in a few
@@ -477,6 +527,8 @@ assets/js/app.js         UI wiring (search, selected terms, tabs, ranking displa
 data/hpo.db.gz           compiled, gzip-compressed database (committed; rebuilt via scripts/build_db.py)
 data/hpo.db              uncompressed build artifact (gitignored, ~46MB, never committed)
 scripts/build_db.py      ETL pipeline
+scripts/update_data.py   downloads fresh HPO/HGNC/Mondo source files and runs build_db.py
+                         (see Rebuilding the database above)
 scripts/smoke_check.py   basic syntax/file/schema sanity checks (see Testing below)
 raw_data/                (gitignored — put HPO/HGNC/OMIM source files here to rebuild;
                          optionally also ClinGen CSVs and Mondo SSSOM crosswalk files)
@@ -544,7 +596,8 @@ python3 scripts/smoke_check.py
 ```
 
 It checks that: every JS file under `assets/js/` parses (`node --check`),
-`scripts/build_db.py` compiles (`python3 -m py_compile`), the required files
+`scripts/build_db.py` and `scripts/update_data.py` compile (`python3 -m
+py_compile`), the required files
 (`index.html`, `data/hpo.db.gz`, the four `assets/js/*.js` files) exist, and
 the database has the expected tables (`terms`, `edges`, `disease`,
 `disease_hpo`, `gene`, `gene_disease`, `meta`). It exits non-zero on any

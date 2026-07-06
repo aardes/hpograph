@@ -75,6 +75,7 @@
           <button id="tab-gene" class="hg-tab-btn" data-tab="gene">Genes</button>
           <button id="tab-clingen" class="hg-tab-btn" data-tab="clingen">ClinGen</button>
           <button id="tab-suggest" class="hg-tab-btn" data-tab="suggest">Suggest</button>
+          <button id="tab-statistics" class="hg-tab-btn" data-tab="statistics">Statistics</button>
         </div>
 
         <div id="panel-selected" class="hg-tab-panel">
@@ -84,8 +85,8 @@
             <button id="copy-link-btn" class="hg-export-btn hg-export-btn-sm"><i class="fa fa-link"></i> Copy link</button>
             <button id="export-json-btn" class="hg-export-btn hg-export-btn-sm"><i class="fa fa-code"></i> JSON</button>
           </div>
-          <div id="relationships-panel" class="hg-relationships"></div>
           <div id="top-summary" class="hg-top-summary"></div>
+          <div id="relationships-panel" class="hg-relationships"></div>
         </div>
 
         <div id="panel-disease" class="hg-tab-panel" style="display:none">
@@ -121,6 +122,30 @@
             <button class="hg-subtab-btn" data-suggest-mode="reinforcing">Common to leaders</button>
           </div>
           <div id="suggest-list"></div>
+        </div>
+
+        <div id="panel-statistics" class="hg-tab-panel" style="display:none">
+          <div id="score-distribution" class="hg-chart-row" style="display:none">
+            <div class="hg-chart-box">
+              <div class="hg-chart-label">Disease scores (top 15)</div>
+              <div class="hg-chart-canvas-wrap"><canvas id="chart-disease-scores"></canvas></div>
+            </div>
+            <div class="hg-chart-box">
+              <div class="hg-chart-label">Gene scores (top 15)</div>
+              <div class="hg-chart-canvas-wrap"><canvas id="chart-gene-scores"></canvas></div>
+            </div>
+          </div>
+          <div id="organ-systems-chart-wrap" class="hg-chart-box" style="display:none">
+            <div class="hg-chart-label">Organ systems spanned</div>
+            <div class="hg-chart-canvas-wrap"><canvas id="chart-organ-systems"></canvas></div>
+          </div>
+          <div id="clingen-chart-wrap" class="hg-chart-box" style="display:none">
+            <div class="hg-chart-label">ClinGen classifications among current candidate genes</div>
+            <div class="hg-chart-canvas-wrap"><canvas id="chart-clingen-breakdown"></canvas></div>
+          </div>
+          <div id="statistics-empty" class="hg-empty" style="display:none">
+            Select one or more HPO terms to see statistics here.
+          </div>
         </div>
       </section>
 
@@ -249,6 +274,21 @@
     </details>
 
     <details>
+      <summary>What's on the "Statistics" tab?</summary>
+      <div class="hg-docs-content">
+        <p>
+          The Statistics tab collects three charts in one place once you've selected two or more phenotype
+          terms: a score drop-off chart for the top 15 candidate diseases and top 15 candidate genes (a
+          quick visual read on whether the ranking has a clear leader or a cluster of near-ties), a
+          horizontal bar chart of the organ systems spanned by your selected terms, and a bar chart of how
+          many current candidate genes fall into each ClinGen classification tier. These are visual
+          companions to information already shown elsewhere (the Selected, ClinGen, and disease/gene tabs)
+          — nothing here is computed differently, they're just easier to scan as charts.
+        </p>
+      </div>
+    </details>
+
+    <details>
       <summary>What is ClinGen, and how is it used here?</summary>
       <div class="hg-docs-content">
         <p>
@@ -328,6 +368,11 @@
 <script src="https://cdn.jsdelivr.net/npm/cytoscape-dagre@2.5.0/cytoscape-dagre.min.js"></script>
 <!-- jsPDF: generates the one-page phenotype report entirely client-side -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/4.0.0/jspdf.umd.min.js"></script>
+<!-- Chart.js: score-distribution, organ-system, and ClinGen breakdown charts.
+     Loaded from jsDelivr's direct npm mirror (dist/chart.umd.min.js is the
+     verified real file name in the published package -- cdnjs's equivalent
+     "chart.min.js" alias was unreliable). -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.0/dist/chart.umd.min.js"></script>
 
 <script src="assets/js/db.js"></script>
 <script src="assets/js/ranking.js"></script>
